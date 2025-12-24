@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block title %}إضافة صفحة{% endblock %}
+{% block content %}
+<div class="container mt-4">
+<h2 class="text-primary mb-3">إضافة صفحة لفرع</h2>
+<form method="POST">
+
+
+<div class="mb-3">
+<label class="form-label">المنصة</label>
+<select name="platform_id" class="form-control" required>
+<option value="" disabled selected>اختر المنصة</option>
+{% for plat in platforms %}
+<option value="{{ plat.id }}">{{ plat.name }}</option>
+{% endfor %}
+</select>
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">العيادة</label>
+<select name="clinic_id" class="form-control" required>
+<option value="" disabled selected>اختر العيادة</option>
+{% for clinic in clinics %}
+<option value="{{ clinic.id }}">{{ clinic.name }}</option>
+{% endfor %}
+</select>
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">Page ID</label>
+<input type="text" name="page_id" class="form-control" required>
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">Token</label>
+<input type="text" name="page_token" class="form-control" required>
+</div>
+
+
+<button class="btn btn-success">حفظ</button>
+<a href="{{ url_for('clinic_pages') }}" class="btn btn-secondary">رجوع</a>
+</form>
+</div>
+{% endblock %}

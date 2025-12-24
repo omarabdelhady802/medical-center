@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}تعديل عيادة{% endblock %}
+{% block content %}
+<div class="container mt-4">
+<h2 class="text-primary mb-3">تعديل بيانات العيادة</h2>
+<form method="POST">
+<div class="mb-3">
+<label class="form-label">اسم العيادة</label>
+<input type="text" name="name" value="{{ clinic.name }}" class="form-control" readonly required>
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">العنوان</label>
+<input type="text" name="address" value="{{ clinic.address }}" class="form-control">
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">الخدمات</label>
+<textarea name="services" class="form-control">{{ clinic.services }}</textarea>
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">الخدمات الفرعية</label>
+<textarea name="subservices" class="form-control">{{ clinic.subservices }}</textarea>
+</div>
+
+
+<button class="btn btn-primary">تحديث</button>
+<a href="{{ url_for('clinics') }}" class="btn btn-secondary">رجوع</a>
+</form>
+</div>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}إضافة عيادة{% endblock %}
+{% block content %}
+<div class="container mt-4">
+<h2 class="text-primary mb-3">إضافة عيادة جديدة</h2>
+<form method="POST">
+<div class="mb-3">
+<label class="form-label">اسم العيادة</label>
+<input type="text" name="name" class="form-control" required>
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">العنوان</label>
+<input type="text" name="address" class="form-control">
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">الخدمات</label>
+<textarea name="services" class="form-control"></textarea>
+</div>
+
+
+<div class="mb-3">
+<label class="form-label">الخدمات الفرعية</label>
+<textarea name="subservices" class="form-control"></textarea>
+</div>
+
+
+<button class="btn btn-success">حفظ</button>
+<a href="{{ url_for('clinics') }}" class="btn btn-secondary">رجوع</a>
+</form>
+</div>
+{% endblock %}
