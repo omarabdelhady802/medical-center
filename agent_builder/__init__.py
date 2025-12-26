@@ -1,3 +1,3 @@
-from .medical_agent import medical_agent
+from .medical_agent import MedicalAgent
 
-__all__ = ['medical_agent']
+__all__ = ['MedicalAgent']

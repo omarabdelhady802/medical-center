@@ -1,10 +1,12 @@
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, redirect, render_template, request, url_for,jsonify
 import os
 
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from models.models import *
 from models.models import db
 from platforms.facebook import FacebookHandler
+from platforms.waha import WAHAHandler
+
 # Initialize Flask app
 app = Flask(__name__)
 
@@ -15,7 +17,6 @@ app.config["SECRET_KEY"] = "your_secret_key"
 app.config["SQLALCHEMY_COMMIT_ON_TEARDOWN"] = False
 app.config['SESSION_TYPE'] = 'filesystem'
 login_manager = LoginManager(app)
-
 
 # Import models after db is created
 db.init_app(app)
@@ -305,36 +306,87 @@ def logout():
     return redirect(url_for('index'))
 
 
-fb_handler = FacebookHandler(
-    page_access_token="EAFZAh4EiZCf0cBQeYCanULFLYZAiALeDfFAVfWsjyfRgGCjBcmeNYQ04Drq3ZCN1w579LQZAhTyOJO7pIbzgrYhHuB6dtcZBQwmRG1WjcHbhcYhegtACeVZBQZC7YbasOr0ZC0SwNp65ncxZCYZCyhLCpFJn4uEuf7ZCzcdeZBz77szFanYHaRZA5iDWrQyWLUFIuZBB8pQpZAyE4gZDZD", 
-    fireworks_key="fw_49sCkqd3yVQTGuCL4cmEKN"
-)
 
 
-@app.route('/webhook', methods=['GET', 'POST'])
-def webhook():
-    # 1. الجزء الخاص بفيسبوك (Verification) لازم يكون في الأول ومنفصل
-    if request.method == 'GET':
+
+import threading # ضيف دي فوق خالص في ملف app.py
+
+# 1️⃣ دالة المعالجة في الخلفية (دي اللي هتعمل الشغل التقيل)
+def process_facebook_message(messaging_event, page_id, page_token):
+    # بنفتح context جديد عشان الداتابيز تشتغل في الـ Thread الجديد
+    with app.app_context():
+        try:
+            handler = FacebookHandler(
+                page_access_token=page_token,
+                fireworks_key=os.getenv("FIREWORKS_API_KEY")
+            )
+            handler.handle_event(messaging_event, page_id)
+        except Exception as e:
+            print(f"❌ Error in background process: {e}")
+
+# 2️⃣ الـ Webhook Route (بقى وظيفته الاستلام والرد السريع بس)
+@app.route("/fb_webhook", methods=["GET", "POST"])
+def fb_webhook():
+    if request.method == "GET":
+        # كود الـ Verification (زي ما هو)
         if request.args.get("hub.verify_token") == "dangerMo":
-            return request.args.get("hub.challenge")
-        return "Verification failed", 403
+            return request.args.get("hub.challenge"), 200
+        return "Forbidden", 403
 
-    # 2. استقبال البيانات (POST)
-    data = request.get_json()
-    
-    if data.get("object") == "page":
-        for entry in data.get("entry", []):
-            page_id = entry['id']
-            for messaging_event in entry.get("messaging", []):
-                
-                # ✅ الفحص مكانه هنا "داخل الـ Loop" بعد ما messaging_event اتعرفت
-                if 'message' not in messaging_event:
-                    continue
-                
-                # الـ Handler هو اللي فيه فحص الـ is_echo دلوقتي
-                fb_handler.handle_event(messaging_event, page_id)
+    payload = request.json
+    for event in payload.get("entry", []):
+        page_id = event.get("id")
+        
+        # بنجيب التوكن بسرعة ونخرج
+        page_data = ClinicPage.query.filter_by(page_id=str(page_id)).first()
+        if not page_data: continue
 
-    return "EVENT_RECEIVED", 200
+        for messaging_event in event.get("messaging", []):
+            if 'message' in messaging_event and not messaging_event.get('message').get('is_echo'):
+                
+                # 🔥 هنا السحر: بنشغل المعالجة في "Thread" منفصل
+                # ونقوله خد الرسالة دي وعالجها مع نفسك أنا هرد على فيسبوك دلوقتي
+                thread = threading.Thread(
+                    target=process_facebook_message, 
+                    args=(messaging_event, page_id, page_data.page_token)
+                )
+                thread.start() # ابدأ المعالجة بعيد عن الـ Route
+
+    # 3️⃣ بنرد على فيسبوك فوراً (غالباً في أقل من 100 مللي ثانية)
+    # كده فيسبوك مستحيل يبعت الرسالة تاني لأنك رديت عليه بسرعة البرق
+    return jsonify({"status": "ok"}), 200
+
+# WAHA instances config
+WAHA_INSTANCES = {
+    "INSTANCE_1": {
+        "api_url": os.getenv("WAHA_API_URL"),
+        "instance": os.getenv("WAHA_INSTANCE_1"),
+        "api_key": os.getenv("WAHA_API_KEY_1")
+    },
+    "INSTANCE_2": {
+        "api_url": os.getenv("WAHA_API_URL"),
+        "instance": os.getenv("WAHA_INSTANCE_2"),
+        "api_key": os.getenv("WAHA_API_KEY_2")
+    }
+}
+
+# create handler cache لكل instance
+waha_handlers = {}
+for name, cfg in WAHA_INSTANCES.items():
+    waha_handlers[name] = WAHAHandler(cfg["api_url"], cfg["instance"], cfg["api_key"])
+
+# single webhook route لكل WAHA
+@app.route("/waha_webhook", methods=["POST"])
+def waha_webhook():
+    payload = request.json
+    instance_name = payload.get("instance_name")  # from webhook
+    handler = waha_handlers.get(instance_name)
+    if not handler:
+        return jsonify({"status": "ignored", "reason": "unknown instance"}), 400
+
+    result = handler.handle_payload(payload)
+    return jsonify(result or {"status": "ok"}), 200
+
 if __name__ == "__main__":
    
 
