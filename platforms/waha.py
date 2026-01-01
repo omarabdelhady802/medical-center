@@ -2,6 +2,8 @@ import requests
 import os
 import base64
 from platforms.basehundelr import BaseChatHandler
+from notified_center.EmailSender import EmailClient
+emailclient = EmailClient()
 
 class WAHAHandler(BaseChatHandler):
     platform_id = 2
@@ -49,6 +51,9 @@ class WAHAHandler(BaseChatHandler):
             
         except Exception as e:
             print(f"[ERROR] Failed to connect to WAHA: {e}")
+            emailclient.send_email(
+                subject="WAHA Send Message Error in waha file",
+                body=f"An error occurred while sending a message via WAHA: {e}")
             return None
 
     def download_image(self, media):
@@ -71,6 +76,9 @@ class WAHAHandler(BaseChatHandler):
             return None
         except Exception as e:
             print(f"[ERROR] WAHA Download Error: {e}")
+            emailclient.send_email(
+                subject="WAHA Download Error in waha file",
+                body=f"An error occurred while downloading media from WAHA: {e}")
             return None
 
     def download_pdf(self, media):

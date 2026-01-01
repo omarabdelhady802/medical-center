@@ -1,8 +1,7 @@
 from flask import Flask, flash, redirect, render_template, request, url_for,jsonify
 import os
 import threading
-
-
+from flask_migrate import Migrate
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from models.models import *
 from models.models import db
@@ -12,6 +11,8 @@ from parsers.facebook  import parse_facebook_message
 from parsers.waha import parse_waha_message
 from service.message_processor import process_message
 from concurrent.futures import ThreadPoolExecutor
+from notified_center.EmailSender import EmailClient
+email_client = EmailClient()
 
 
 
@@ -32,9 +33,8 @@ login_manager = LoginManager(app)
 
 # Import models after db is created
 db.init_app(app)
-# Create tables (does not auto-commit anything)
-with app.app_context():
-    db.create_all()
+migrate = Migrate(app, db)   # ✅ مهم جدًا
+
 
 
 
@@ -392,6 +392,9 @@ def fb_webhook():
 
     except Exception as e:
         print(f"[ERROR] Facebook webhook error: {e}")
+        email_client.send_email(
+            subject="Facebook Webhook Error in app file",
+            body=f"An error occurred in Facebook webhook: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -445,6 +448,11 @@ def waha_webhook():
 
     except Exception as e:
         print(f"[ERROR] WAHA webhook error: {e}")
+        email_client.send_email(
+            subject="WAHA Webhook Error in app file",
+            body=f"An error occurred in WAHA webhook: {e}"
+        )
+        
         import traceback
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -468,12 +476,4 @@ def health():
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🚀 Starting Flask Webhook Server")
-    print("=" * 60)
-    print("📍 Facebook Webhook: /fb_webhook")
-    print("📍 WAHA Webhook: /waha_webhook")
-    print("📍 Health Check: /health")
-    print("=" * 60)
-    
-app.run(host="0.0.0.0", debug=True, port=5000, threaded=True)
+    app.run(host="0.0.0.0", debug=True, port=2005, threaded=True)

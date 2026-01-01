@@ -1,38 +1,44 @@
 import pandas as pd
 import os
 from datetime import datetime,timedelta, timezone
-from models.models import db
-
-
+from models.models import db ,Booking
+from notified_center.EmailSender import EmailClient
+emailclient=EmailClient()
 class BookingService:
     
     @staticmethod
     def book(patient_name, service_name, date, phone_number):
-        file_name = "bookings.xlsx"
         
-        booking_data = {
-            "Patient Name": patient_name,
-            "Service": service_name,
-            "Date": date,
-            "Phone Number": phone_number,
-            "Booking Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-
-        try:
-            if os.path.isfile(file_name):
-                df_existing = pd.read_excel(file_name)
-                df_new = pd.concat([df_existing, pd.DataFrame([booking_data])], ignore_index=True)
-            else:
-                df_new = pd.DataFrame([booking_data])
-
-            df_new.to_excel(file_name, index=False)
-            print(f"✅ Booking saved to Excel")
-            
-            return True  # 👈 السطر ده أهم حاجة! لازم نرجع True عشان الـ Tool تحس بالنجاح
-            
-        except Exception as e:
-            print(f"❌ Excel Error: {e}")
-            return False # 👈 ونرجع False لو حصلت مشكلة
+        book =Booking.query.filter_by(
+            patient_name=patient_name, 
+            service_name=service_name,
+            date=date,
+            phone_number=phone_number
+        ).first() 
+        if book:
+            print("⚠️ Booking already exists in the database")
+            return False
+        else:
+            new_booking = Booking(
+                patient_name=patient_name,
+                service_name=service_name,
+                date=date,
+                phone_number=phone_number,
+            )
+            try:
+                db.session.add(new_booking)
+                db.session.commit()
+                print("✅ Booking saved to database")
+                return True
+            except Exception as e:
+                db.session.rollback()
+                print(f"❌ Database Error: {e}")
+                emailclient.send_email(
+                    subject="BookingService Database Error in services file",
+                    body=f"An error occurred while saving a booking: {e}"
+                )
+                return False
+        
         
         
 class MemoryService:
@@ -48,3 +54,8 @@ class MemoryService:
         except Exception as e:
             db.session.rollback()
             print(f"❌ Database Memory Error: {e}")
+            emailclient.send_email(
+                subject="MemoryService Database Error in services file",
+                body=f"An error occurred while updating client memory: {e}"
+            )
+            

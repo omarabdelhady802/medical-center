@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 import json
 import logging
 import os
@@ -8,9 +9,10 @@ from .repositories import ClinicRepository, ClientRepository
 from .services import MemoryService
 from .tools import create_booking_tool
 from .prompt import SYSTEM_PROMPT, USER_PROMPT
+from notified_center.EmailSender import EmailClient
 
 logger = logging.getLogger(__name__)
-
+email_client = EmailClient()
 class MedicalAgent:
     def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key):
         # 1. تهيئة العميل والعيادة
@@ -50,10 +52,18 @@ class MedicalAgent:
         """
         معالجة الرسائل النصية والتحقق من استدعاء الأدوات
         """
+        self.now = datetime.now()
+        self.two_weeks_ago = self.now - timedelta(days=14)
+
+        if self.client.expiration_date < self.two_weeks_ago:
+            self.chat_summary = "the chat history has expired."
+        else:
+            self.chat_summary = self.client.chat_summary or ""
+
         # تحضير الرسائل للموديل
         messages = self.main_prompt.format_messages(
             message=message,
-            summary=self.client.chat_summary or "No history.",
+            summary=self.chat_summary,
             last_reply=self.client.last_bot_reply or "",
             **self.context
         )
@@ -105,7 +115,11 @@ class MedicalAgent:
                 
             except Exception as e:
                 logger.warning(f"JSON Parsing failed, using raw response: {e}")
-                reply = content
+                email_client.send_email(
+                    subject="Medical Agent JSON Parsing Error in medical agent file",
+                    body=f"Failed to parse JSON from model response:Error: {e}"
+                )
+                reply = "سيتم الرد عليك قريباً. شكراً جزيلاً"
 
         # تحديث الذاكرة
         MemoryService.update(

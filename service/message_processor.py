@@ -1,4 +1,6 @@
 from models.models import ClinicPage
+from notified_center.EmailSender import EmailClient
+emailclient = EmailClient()
 
 
 class IncomingMessage:
@@ -36,5 +38,8 @@ def process_message(handler_cls, platform_id, page_id, message):
     
     except Exception as e:
         print(f"[ERROR] process_message failed: {e}")
+        emailclient.send_email(
+            subject="Error in process_message in message_processor file",
+            body=f"An error occurred while processing message for platform_id: {platform_id}, page_id: {page_id}, sender_id: {message.sender_id}\n\nError: {e}")
         import traceback
         traceback.print_exc()

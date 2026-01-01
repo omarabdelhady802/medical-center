@@ -1,5 +1,7 @@
 import requests
 from platforms.basehundelr import BaseChatHandler
+from notified_center.EmailSender import EmailClient
+emailclient = EmailClient() 
 
 
 class FacebookHandler(BaseChatHandler):
@@ -44,12 +46,21 @@ class FacebookHandler(BaseChatHandler):
             
         except requests.exceptions.Timeout:
             print("[ERROR] Timeout while downloading image")
+            emailclient.send_email(
+                subject="Timeout Error in Facebook Image Download in facebook file",
+                body="A timeout occurred while downloading an image from Facebook.")
             return None
         except requests.exceptions.RequestException as e:
             print(f"[ERROR] Failed to download image from Facebook: {e}")
+            emailclient.send_email(
+                subject="Image Download Error in Facebook in facebook file",
+                body=f"An error occurred while downloading an image from Facebook: {e}")
             return None
         except Exception as e:
             print(f"[ERROR] Unexpected error downloading image: {e}")
+            emailclient.send_email(
+                subject="Unexpected Error in Facebook Image Download in facebook file",
+                body=f"An unexpected error occurred while downloading an image from Facebook: {e}")
             return None
     
     def download_pdf(self, media):
@@ -76,10 +87,19 @@ class FacebookHandler(BaseChatHandler):
             
         except requests.exceptions.Timeout:
             print("[ERROR] Timeout while downloading PDF")
+            emailclient.send_email(
+                subject="Timeout Error in Facebook PDF Download in facebook file",
+                body="A timeout occurred while downloading a PDF from Facebook.")
             return None
         except requests.exceptions.RequestException as e:
             print(f"[ERROR] Failed to download PDF from Facebook: {e}")
+            emailclient.send_email(
+                subject="PDF Download Error in Facebook in facebook file",
+                body=f"An error occurred while downloading a PDF from Facebook: {e}")
             return None
         except Exception as e:
             print(f"[ERROR] Unexpected error downloading PDF: {e}")
+            emailclient.send_email(
+                subject="Unexpected Error in Facebook PDF Download in facebook file",
+                body=f"An unexpected error occurred while downloading a PDF from Facebook: {e}")
             return None

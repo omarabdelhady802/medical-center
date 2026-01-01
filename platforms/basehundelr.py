@@ -3,6 +3,8 @@ import re
 import traceback
 from agent_builder.medical_agent import MedicalAgent
 from extraction.chatOcr import OCRAssistant
+from notified_center.EmailSender import EmailClient
+emailclient = EmailClient()
 
 class BaseChatHandler:
     platform_id = None
@@ -56,6 +58,9 @@ class BaseChatHandler:
             
         except Exception as e:
             print(f"[ERROR] Image OCR failed: {e}")
+            emailclient.send_email(
+                subject="Image OCR Error in chatOcr file in baseChatHandler",
+                body=f"An error occurred in handle_image_ocr method: {e}")
             traceback.print_exc()
             return self.send(message.sender_id, "❌ حدث خطأ أثناء تحليل الصورة.")
 
@@ -72,6 +77,9 @@ class BaseChatHandler:
             
         except Exception as e:
             print(f"[ERROR] PDF OCR failed: {e}")
+            emailclient.send_email(
+                subject="PDF OCR Error in chatOcr file in baseChatHandler",
+                body=f"An error occurred in handle_pdf_ocr method: {e}")
             traceback.print_exc()
             return self.send(message.sender_id, "❌ حدث خطأ أثناء تحليل الملف.")
 
@@ -101,6 +109,9 @@ class BaseChatHandler:
             return None
         except Exception as e:
             print(f"[ERROR] Parsing failed: {e}")
+            emailclient.send_email(
+                subject="OCR Output Parsing Error in parse file",
+                body=f"An error occurred while parsing OCR output: {e}")
             return None
 
     def _get_document_type(self, parsed_data):

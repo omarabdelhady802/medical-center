@@ -2,6 +2,11 @@
 from flask_login import UserMixin
 from sqlalchemy import PrimaryKeyConstraint, ForeignKeyConstraint
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+import pytz
+
+egypt_tz = pytz.timezone("Africa/Cairo")
+
 
 db = SQLAlchemy()
 # -------------------------
@@ -38,6 +43,7 @@ class ClinicBranch(db.Model):
     address = db.Column(db.String(255))
     services = db.Column(db.Text)     
     subservices = db.Column(db.Text)  
+    note = db.Column(db.Text)  
 
     # Relationship to ClinicPage
     clinic_pages = db.relationship("ClinicPage", back_populates="clinic")
@@ -89,3 +95,19 @@ class Client(db.Model):
     )
 
     clinic_page = db.relationship("ClinicPage", back_populates="clients")
+
+
+
+
+# -------------------------
+# Booking Table
+# -------------------------
+class Booking(db.Model):
+    __tablename__ = "booking"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    services = db.Column(db.Text)     
+    date = db.Column(db.String(100))
+    phone_number = db.Column(db.String(50))
+    booking_time = db.Column(db.DateTime, default=datetime.now(egypt_tz))

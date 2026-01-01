@@ -1,5 +1,7 @@
 from models.models import ClinicPage, ClinicBranch, Client, db
 from sqlalchemy.exc import IntegrityError
+from notified_center.EmailSender import EmailClient
+email_client = EmailClient()
 
 
 
@@ -51,6 +53,11 @@ class ClientRepository:
             except IntegrityError:
                 # Rollback in case of a race condition (two messages at once)
                 db.session.rollback()
+                email_client.send_email(
+                    subject="ClientRepository IntegrityError in repositories file",
+                    body=f"IntegrityError occurred while creating client for platform_id: {platform_id}, clinic_id: {clinic_id}, page_id: {page_id}, sender_id: {sender_id}"
+                )
+                
                 # Try fetching one last time
                 client = Client.query.filter_by(
                     platform_id=platform_id,

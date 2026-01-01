@@ -104,4 +104,5 @@ zstandard==0.25.0
 llama-parse
 pymupdf
 opencv-python
+Flask-Migrate
 

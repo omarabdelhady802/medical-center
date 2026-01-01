@@ -6,7 +6,8 @@ import re
 import cv2
 import numpy as np
 import io
-
+from notified_center.EmailSender import EmailClient
+email_client = EmailClient()
 
 
 # ------------------------ PROMPT ------------------------
@@ -268,6 +269,11 @@ def extract_json(text):
                     all_items.extend(data)
                     print(f"  ✓ Found valid checkbox array with {len(data)} items")
         except json.JSONDecodeError:
+            email_client.send_email(
+                subject="JSONDecodeError in parse file",
+                body=f"Failed to decode JSON array from text segment: {match.group()}"
+            )
+            
             continue
     
     
@@ -388,6 +394,10 @@ if __name__ == "__main__":
             
         except Exception as e:
             print(f"Error processing the file: {e}")
+            email_client.send_email(
+                subject="File Processing Error in parse file",
+                body=f"An error occurred while processing the file {file_path}: {e}"
+            )
             import traceback
             traceback.print_exc()
     else:

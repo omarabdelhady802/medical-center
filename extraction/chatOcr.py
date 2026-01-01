@@ -6,6 +6,8 @@ import nest_asyncio
 import json
 import os
 import tempfile
+from notified_center.EmailSender import EmailClient
+emailclient=EmailClient()
 
 # ✅ Fix nested async issue
 nest_asyncio.apply()
@@ -203,6 +205,9 @@ class OCRAssistant:
 
         except Exception as e:
             print(f"❌ OCRAssistant error: {e}")
+            emailclient.send_email(
+                subject="OCRAssistant Error in chatOcr file",
+                body=f"An error occurred in OCRAssistant reply method: {e}")
             return {"output": "An error occurred.", "type": "error"}
 
     def _run_ocr_binary(self, binary_data, file_ext, file_type, sender_id):
@@ -238,4 +243,8 @@ class OCRAssistant:
 
         except Exception as e:
             print(f"[ERROR] OCR processing failed: {e}")
+            emailclient.send_email(
+                subject="OCR Processing Error in chatOcr file",
+                body=f"An error occurred during OCR processing: {e}"
+            )   
             return {"output": "Failed to process the file.", "type": "error"}
