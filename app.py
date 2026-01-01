@@ -1,21 +1,33 @@
 from flask import Flask, flash, redirect, render_template, request, url_for,jsonify
 import os
+import threading
+
 
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from models.models import *
 from models.models import db
 from platforms.facebook import FacebookHandler
 from platforms.waha import WAHAHandler
+from parsers.facebook  import parse_facebook_message
+from parsers.waha import parse_waha_message
+from service.message_processor import process_message
+from concurrent.futures import ThreadPoolExecutor
+
+
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # Config
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///medical.db"
+basedir = os.path.abspath(os.path.dirname(__file__))
+
+
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(basedir, "instance", "medical.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SECRET_KEY"] = "your_secret_key"
 app.config["SQLALCHEMY_COMMIT_ON_TEARDOWN"] = False
 app.config['SESSION_TYPE'] = 'filesystem'
+
 login_manager = LoginManager(app)
 
 # Import models after db is created
@@ -309,86 +321,159 @@ def logout():
 
 
 
-import threading # ضيف دي فوق خالص في ملف app.py
 
-# 1️⃣ دالة المعالجة في الخلفية (دي اللي هتعمل الشغل التقيل)
-def process_facebook_message(messaging_event, page_id, page_token):
-    # بنفتح context جديد عشان الداتابيز تشتغل في الـ Thread الجديد
-    with app.app_context():
-        try:
-            handler = FacebookHandler(
-                page_access_token=page_token,
-                fireworks_key=os.getenv("FIREWORKS_API_KEY")
-            )
-            handler.handle_event(messaging_event, page_id)
-        except Exception as e:
-            print(f"❌ Error in background process: {e}")
+# ✅ استخدام ThreadPoolExecutor بدلاً من threading مباشرة
+# يدير الـ threads بشكل أفضل ويمنع التراكم
+executor = ThreadPoolExecutor(max_workers=10)
 
-# 2️⃣ الـ Webhook Route (بقى وظيفته الاستلام والرد السريع بس)
+
+# ==================== Facebook Webhook ====================
+
 @app.route("/fb_webhook", methods=["GET", "POST"])
 def fb_webhook():
+    """
+    Webhook للفيسبوك - يستقبل الرسائل ويعالجها
+    """
+    
+    # 🔹 GET: التحقق من الـ Webhook (Facebook بيطلبه أول مرة)
     if request.method == "GET":
-        # كود الـ Verification (زي ما هو)
-        if request.args.get("hub.verify_token") == "dangerMo":
-            return request.args.get("hub.challenge"), 200
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        
+        VERIFY_TOKEN = "dangerMo"
+
+        if mode == "subscribe" and token == VERIFY_TOKEN:
+            print("[INFO] Facebook Webhook verified successfully!")
+            return challenge, 200
+        
+        print("[WARNING] Facebook Webhook verification failed")
         return "Forbidden", 403
 
-    payload = request.json
-    for event in payload.get("entry", []):
-        page_id = event.get("id")
+    # 🔹 POST: استقبال الرسائل
+    try:
+        payload = request.json
         
-        # بنجيب التوكن بسرعة ونخرج
-        page_data = ClinicPage.query.filter_by(page_id=str(page_id)).first()
-        if not page_data: continue
+        if not payload:
+            return jsonify({"status": "no_payload"}), 200
 
-        for messaging_event in event.get("messaging", []):
-            if 'message' in messaging_event and not messaging_event.get('message').get('is_echo'):
-                
-                # 🔥 هنا السحر: بنشغل المعالجة في "Thread" منفصل
-                # ونقوله خد الرسالة دي وعالجها مع نفسك أنا هرد على فيسبوك دلوقتي
-                thread = threading.Thread(
-                    target=process_facebook_message, 
-                    args=(messaging_event, page_id, page_data.page_token)
-                )
-                thread.start() # ابدأ المعالجة بعيد عن الـ Route
+        for entry in payload.get("entry", []):
+            page_id = entry.get("id")
 
-    # 3️⃣ بنرد على فيسبوك فوراً (غالباً في أقل من 100 مللي ثانية)
-    # كده فيسبوك مستحيل يبعت الرسالة تاني لأنك رديت عليه بسرعة البرق
-    return jsonify({"status": "ok"}), 200
+            for ev in entry.get("messaging", []):
+                # تجاهل الرسائل الصادرة والـ delivery receipts
+                if (
+                    ev.get("message", {}).get("is_echo")
+                    or "delivery" in ev
+                    or "read" in ev
+                    or "reaction" in ev
+                ):
+                    continue
 
-# WAHA instances config
-WAHA_INSTANCES = {
-    "INSTANCE_1": {
-        "api_url": os.getenv("WAHA_API_URL"),
-        "instance": os.getenv("WAHA_INSTANCE_1"),
-        "api_key": os.getenv("WAHA_API_KEY_1")
-    },
-    "INSTANCE_2": {
-        "api_url": os.getenv("WAHA_API_URL"),
-        "instance": os.getenv("WAHA_INSTANCE_2"),
-        "api_key": os.getenv("WAHA_API_KEY_2")
-    }
-}
+                # تحليل الرسالة
+                msg = parse_facebook_message(ev)
+                if not msg:
+                    continue
 
-# create handler cache لكل instance
-waha_handlers = {}
-for name, cfg in WAHA_INSTANCES.items():
-    waha_handlers[name] = WAHAHandler(cfg["api_url"], cfg["instance"], cfg["api_key"])
+                # ✅ معالجة الرسالة في thread منفصل
+                def process_fb_message():
+                    try:
+                        with app.app_context():
+                            process_message(FacebookHandler, 1, page_id, msg)
+                    except Exception as e:
+                        print(f"[ERROR] Facebook message processing failed: {e}")
+                        import traceback
+                        traceback.print_exc()
 
-# single webhook route لكل WAHA
+                # استخدام ThreadPoolExecutor بدلاً من threading.Thread
+                executor.submit(process_fb_message)
+
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        print(f"[ERROR] Facebook webhook error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==================== WAHA Webhook ====================
+
 @app.route("/waha_webhook", methods=["POST"])
 def waha_webhook():
-    payload = request.json
-    instance_name = payload.get("instance_name")  # from webhook
-    handler = waha_handlers.get(instance_name)
-    if not handler:
-        return jsonify({"status": "ignored", "reason": "unknown instance"}), 400
+    """
+    Webhook لواتساب (WAHA) - يستقبل الرسائل ويعالجها
+    """
+    try:
+        data = request.json
+        
+        if not data:
+            return jsonify({"status": "no_data"}), 200
 
-    result = handler.handle_payload(payload)
-    return jsonify(result or {"status": "ok"}), 200
+        payload = data.get("payload", {})
+        
+        # تجاهل الرسائل الصادرة منك
+        if payload.get("fromMe") is True:
+            return jsonify({"status": "ignored_outgoing"}), 200
+
+        # تحليل الرسالة
+        msg = parse_waha_message(payload)
+        if not msg:
+            return jsonify({"status": "no_message"}), 200
+        
+        # استخراج معرف البوت (رقم التليفون)
+        bot_phone_id = data.get("me", {}).get("id")
+        
+        if not bot_phone_id:
+            print("[WARNING] No bot phone ID in WAHA webhook")
+            return jsonify({"status": "no_bot_id"}), 200
+
+        # ✅ معالجة الرسالة في thread منفصل
+        def process_waha_message():
+            try:
+                with app.app_context():
+                    process_message(WAHAHandler, 2, bot_phone_id, msg)
+            except Exception as e:
+                print(f"[ERROR] WAHA message processing failed: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # استخدام ThreadPoolExecutor
+        executor.submit(process_waha_message)
+
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        print(f"[ERROR] WAHA webhook error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==================== Health Check ====================
+
+@app.route("/health", methods=["GET"])
+def health():
+    """
+    Health check endpoint - للتأكد إن السيرفر شغال
+    """
+    return jsonify({
+        "status": "healthy",
+        "active_threads": threading.active_count()
+    }), 200
+
+
+
+
+
 
 if __name__ == "__main__":
-   
-
-    app.run(port=5000, debug=True)
-
+    print("=" * 60)
+    print("🚀 Starting Flask Webhook Server")
+    print("=" * 60)
+    print("📍 Facebook Webhook: /fb_webhook")
+    print("📍 WAHA Webhook: /waha_webhook")
+    print("📍 Health Check: /health")
+    print("=" * 60)
+    
+app.run(host="0.0.0.0", debug=True, port=5000, threaded=True)

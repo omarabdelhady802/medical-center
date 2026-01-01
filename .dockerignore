@@ -1,0 +1,6 @@
+waha_1/
+waha_2/
+__pycache__/
+*.pyc
+.env
+.git

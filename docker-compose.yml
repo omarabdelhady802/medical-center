@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # --- 1. تطبيق Flask الخاص بك ---
+  flask_app:
+    build: .
+    container_name: medical_flask_app
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    environment:
+      - FLASK_ENV=development
+      - DOCKER_ENV=true
+    depends_on:
+      - waha_1
+      - waha_2
+    restart: always
+
+  # --- 2. حاوية واتساب للعيادة الأولى ---
+  waha_1:
+    image: devlikeapro/waha
+    container_name: waha_container_1
+    ports:
+      - "3001:3000"  # لفتح اللوحة: localhost:3001
+    environment:
+      - WAHA_DASHBOARD_USERNAME=admin
+      - WAHA_DASHBOARD_PASSWORD=admin123    # الباسورد اللي هتدخل بيه في المتصفح
+      - WAHA_API_KEY=key123                 # الكي اللي هتحطه في كود الـ Python
+    volumes:
+      - ./waha_1:/app/.sessions
+    restart: always
+
+  # --- 3. حاوية واتساب للعيادة الثانية ---
+  waha_2:
+    image: devlikeapro/waha
+    container_name: waha_container_2
+    ports:
+      - "3002:3000" 
+    environment:
+      - WAHA_DASHBOARD_USERNAME=admin
+      - WAHA_DASHBOARD_PASSWORD=admin123
+      - WAHA_API_KEY=key123
+    volumes:
+      - ./waha_2:/app/.sessions
+    restart: always
+
+networks:
+  default:
+    name: medical_network

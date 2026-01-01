@@ -39,7 +39,7 @@ class MemoryService:
     @staticmethod
     def update(client, summary, last_reply):
         try:
-            client.chat_summary = (summary or "")[:500]
+            client.chat_summary = (summary or "")
             client.last_bot_reply = last_reply
             client.expiration_date = datetime.now(timezone.utc) + timedelta(days=2)
 

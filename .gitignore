@@ -2,3 +2,5 @@
 \myenv
 __pycache__/
 *.pyc
+\instance
+instance/

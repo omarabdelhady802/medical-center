@@ -1,116 +1,77 @@
-import os
 import requests
-import logging
-from agent_builder.medical_agent import MedicalAgent
-from agent_builder.repositories import ClinicRepository, ClientRepository
+import os
+import base64
+from platforms.basehundelr import BaseChatHandler
 
-logger = logging.getLogger(__name__)
+class WAHAHandler(BaseChatHandler):
+    platform_id = 2
 
-class WAHAHandler:
-    """
-    WAHA (WhatsApp API) Handler Production-ready.
-    Supports multiple instances/pages dynamically and integrates with MedicalAgent.
-    """
+    def __init__(self, clinic_page):
+        super().__init__(clinic_page)
+        
+        # 🔹 Hard-coded Distribution
+        if clinic_page.clinic_id == 1:
+            self.api_url = "http://waha_1:3000"
+        elif clinic_page.clinic_id == 2:
+            self.api_url = "http://waha_2:3000"
+        else:
+            self.api_url = "http://waha_1:3000"
+          
+        self.clean_key = str(self.api_key).strip() if self.api_key else ""
+        
+        self.headers = {
+            "Content-Type": "application/json",
+            "X-Api-Key": self.clean_key
+        }
 
-    def __init__(self, api_url, instance, api_key):
-        self.api_url = api_url
-        self.instance = instance
-        self.api_key = api_key
-        self.headers = {"Content-Type": "application/json", "X-Api-Key": self.api_key}
-        self.agents = {}  # cache لكل client/page
-
-    def get_agent(self, page_id, sender_id):
-        """
-        Fetch or create a MedicalAgent dynamically for a given page + sender
-        """
-        clinic = ClinicRepository.get_by_page_id(page_id)
-        if not clinic:
-            logger.error(f"No clinic found for page_id: {page_id}")
+    def send(self, sender_id, text):
+        """إرسال رسالة مع حماية ضد النصوص الفارغة وتنسيق المسافات"""
+        if not text or str(text).strip() == "":
+            print("[WARNING] Attempted to send empty text, skipping...")
             return None
 
-        client = ClientRepository.get_or_create(
-            platform_id="waha",
-            clinic_id=clinic.id,
-            page_id=page_id,
-            sender_id=sender_id
-        )
-
-        key = (page_id, sender_id)
-        if key not in self.agents:
-            self.agents[key] = MedicalAgent(
-                platform_id="waha",
-                clinic_id=clinic.id,
-                page_id=page_id,
-                sender_id=sender_id,
-                api_key=self.api_key
-            )
-        return self.agents[key]
-
-    def handle_payload(self, payload):
-        """
-        Handle incoming WAHA webhook payload
-        """
+        url = f"{self.api_url}/api/sendText"
+        payload = {
+            "session": "default",
+            "chatId": sender_id,
+            "text": str(text)
+        }
+        
         try:
-            # تجاهل رسائل المجموعات
-            if "participant" in payload:
-                logger.info("Message from group, ignoring...")
-                return None
-
-            chat_id = payload.get("from")
-            if not chat_id:
-                logger.warning("No chat_id in payload")
-                return None
-
-            body = payload.get("body", "")
-            has_media = payload.get("hasMedia", False)
-            media = payload.get("media", {})
-
-            # الميديا
-            if has_media and media:
-                reply = self.parse_media(media)
-                return self.send_message(chat_id, reply)
-
-            # نصوص
-            if body:
-                # نجيب page_id من الـ payload أو DB حسب الـ chat_id
-                page_id = payload.get("page_id", "default_page")  # replace logic as needed
-                agent = self.get_agent(page_id, chat_id)
-                if not agent:
-                    return self.send_message(chat_id, "⚠️ لا يمكن معالجة رسالتك حالياً.")
-
-                reply = agent.chat(body)
-                return self.send_message(chat_id, reply)
-
-            # fallback
-            return self.send_message(chat_id, "ℹ️ تم استلام رسالتك")
-
+            response = requests.post(url, json=payload, headers=self.headers, timeout=10)
+            if response.status_code not in [200, 201]:
+                print(f"[ERROR] WAHA returned {response.status_code}: {response.text}")
+            else:
+                print(f"[DEBUG] Message sent successfully to {sender_id}")
+            
+            # ✅ التعديل هنا: لا ترجع كائن الـ response أبداً للمستخدم
+            return None 
+            
         except Exception as e:
-            logger.error(f"Failed to handle message from {payload.get('from')}: {e}")
-            self.send_message(payload.get("from"), "❌ حدث خطأ أثناء معالجة رسالتك")
+            print(f"[ERROR] Failed to connect to WAHA: {e}")
+            return None
 
-    def parse_media(self, media):
-        mimetype = media.get("mimetype", "")
-        filename = media.get("filename", "file")
-        if mimetype == "image/webp":
-            return "😀 I received a sticker!"
-        elif mimetype.startswith("image/"):
-            return "📷 I received an image"
-        elif mimetype.startswith("video/"):
-            return "🎥 I received a video"
-        elif mimetype.startswith("audio/"):
-            return "🎵 I received an audio"
-        elif mimetype == "application/pdf":
-            return f"🧾 I received a PDF document: {filename}"
-        else:
-            return f"📎 I received a file of type: {mimetype}"
-
-    def send_message(self, chat_id, text):
-        data = {"session": self.instance, "chatId": chat_id, "text": text}
+    def download_image(self, media):
+        """تحميل الصور/الملفات من WAHA"""
         try:
-            r = requests.post(f"{self.api_url}/api/sendText", json=data, headers=self.headers, timeout=5)
-            r.raise_for_status()
-            logger.info(f"Message sent to {chat_id}")
-            return r.json()
-        except requests.RequestException as e:
-            logger.error(f"Failed to send message to {chat_id}: {e}")
-            return {"status": "error", "error": str(e)}
+            if "data" in media:
+                return base64.b64decode(media["data"])
+            
+            url = media.get("url")
+            if url:
+                if "localhost" in url:
+                    # استخراج الـ Hostname من api_url (مثلاً waha_1)
+                    host = self.api_url.split("//")[1].split(":")[0]
+                    url = url.replace("localhost", host)
+                
+                response = requests.get(url, headers=self.headers, timeout=15)
+                response.raise_for_status()
+                return response.content
+            
+            return None
+        except Exception as e:
+            print(f"[ERROR] WAHA Download Error: {e}")
+            return None
+
+    def download_pdf(self, media):
+        return self.download_image(media)

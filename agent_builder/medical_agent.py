@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+from dotenv import load_dotenv
 from langchain_fireworks import ChatFireworks
 from langchain_core.prompts import ChatPromptTemplate
 from .repositories import ClinicRepository, ClientRepository
@@ -23,16 +25,19 @@ class MedicalAgent:
             "services": clinic.services or "No services listed",
             "subservices": clinic.subservices or ""
         }
+        
+        load_dotenv()
+        FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY")
 
-        # 2. إعداد الموديل (بدون فرض JSON Mode تقنياً لمنع التعارض مع الـ Tools)
+        # 2. إعداد الموديل
         self.llm = ChatFireworks(
             model="accounts/fireworks/models/kimi-k2-instruct-0905",
             temperature=0,
-            api_key=api_key
+            api_key=FIREWORKS_API_KEY,
         )
 
         # 3. إعداد الأدوات
-        self.booking_tool = create_booking_tool() # لا يحتاج لباراميتر الآن
+        self.booking_tool = create_booking_tool()
         self.llm_with_tools = self.llm.bind_tools([self.booking_tool])
 
         # 4. إعداد الـ Prompts
@@ -42,6 +47,9 @@ class MedicalAgent:
         ])
 
     def chat(self, message: str):
+        """
+        معالجة الرسائل النصية والتحقق من استدعاء الأدوات
+        """
         # تحضير الرسائل للموديل
         messages = self.main_prompt.format_messages(
             message=message,
@@ -56,45 +64,50 @@ class MedicalAgent:
         reply = ""
         new_summary = self.client.chat_summary or ""
 
-        # --- المسار الأول: إذا قرر الموديل استخدام أداة الحجز (Tool Call) ---
-        tool_calls = getattr(response, "tool_calls", [])
-        if tool_calls:
-            for call in tool_calls:
-                if call.get("name") == "book_appointment":
-                    # تنفيذ الحجز الفعلي في الإكسيل
-                    result = self.booking_tool.invoke(call.get("args", {}))
+        # --- المسار الأول: إذا قرر الموديل استخدام أداة الحجز (Tool Calling) ---
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            print(f"[DEBUG] Tool Call Detected: {response.tool_calls[0]['name']}")
+            for tool_call in response.tool_calls:
+                if tool_call.get("name") == "book_appointment":
+                    args = tool_call.get("args", {})
+                    # تنفيذ الحجز فعلياً
+                    result = self.booking_tool.invoke(args)
                     
-                    # التحقق من نجاح الحجز
                     if isinstance(result, dict) and result.get("status") == "success":
-                        reply = "تم تأكيد حجزك بنجاح ✅"
-                        new_summary = f"{new_summary} | [Action: Booked {call.get('args', {}).get('service_name')} on {call.get('args', {}).get('appointment_date')}]"
+                        reply = f"✅ تم تأكيد حجزك بنجاح يا {args.get('patient_name', 'فندم')}!\n📍 الموعد: {args.get('appointment_date')}\n🏥 الخدمة: {args.get('service_name')}\n\nننتظرك في العيادة."
+                        new_summary = f"{new_summary} | [Action: Booked {args.get('service_name')}]"
                     else:
-                        reply = "عذراً، حدث خطأ أثناء الحجز، يرجى تزويدي بالبيانات مرة أخرى ❌"
-                        new_summary = f"{new_summary} | [Action: Booking Failed]"
+                        reply = "❌ عذراً، واجهت مشكلة في تسجيل الحجز. سأقوم بإبلاغ موظف الاستقبال فوراً ليتواصل معك."
                     break
             
-            # تحديث الذاكرة فوراً بعد استخدام الأداة
+            # تحديث الذاكرة والرد فوراً
             MemoryService.update(client=self.client, summary=new_summary, last_reply=reply)
             return reply
 
-        # --- المسار الثاني: رد نصي عادي (يجب أن يكون بتنسيق JSON حسب الـ System Prompt) ---
-        try:
-            content = response.content.strip()
-            # تنظيف الـ Markdown من الرد إذا وجد
-            if content.startswith("```json"):
-                content = content.replace("```json", "").replace("```", "").strip()
-            
-            data = json.loads(content)
-            reply = data.get("reply", "")
-            new_summary = data.get("new_summary", new_summary)
-            
-        except Exception as e:
-            # Fallback في حالة رد الموديل بنص خام (ليس JSON)
-            logger.warning(f"JSON Parsing failed, using raw response: {e}")
-            reply = response.content
-            new_summary = f"{new_summary}\n- User: {message}\n- Bot: {reply}"
+        # --- المسار الثاني: رد نصي عادي أو تحليل JSON مدمج ---
+        content = response.content.strip()
+        
+        # لو الموديل بعت JSON كـ نص بدلاً من Tool Call (Fallback)
+        if '"patient_name"' in content and '"appointment_date"' in content:
+             reply = "تمام، هل تؤكد حجزك بهذه البيانات؟" # رد بسيط لتجنب إظهار الـ JSON
+        else:
+            try:
+                # تنظيف الـ Markdown لو الموديل بعته كـ JSON
+                json_str = content
+                if "```json" in content:
+                    json_str = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    json_str = content.split("```")[1].split("```")[0].strip()
+                
+                data = json.loads(json_str)
+                reply = data.get("reply", content)
+                new_summary = data.get("new_summary", new_summary)
+                
+            except Exception as e:
+                logger.warning(f"JSON Parsing failed, using raw response: {e}")
+                reply = content
 
-        # تحديث قاعدة البيانات بالملخص والرد الجديد
+        # تحديث الذاكرة
         MemoryService.update(
             client=self.client,
             summary=new_summary,
