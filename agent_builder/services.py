@@ -10,8 +10,8 @@ class BookingService:
     def book(patient_name, service_name, date, phone_number):
         
         book =Booking.query.filter_by(
-            patient_name=patient_name, 
-            service_name=service_name,
+            name=patient_name, 
+            services=service_name,
             date=date,
             phone_number=phone_number
         ).first() 
@@ -20,8 +20,8 @@ class BookingService:
             return False
         else:
             new_booking = Booking(
-                patient_name=patient_name,
-                service_name=service_name,
+                name=patient_name,
+                services=service_name,
                 date=date,
                 phone_number=phone_number,
             )

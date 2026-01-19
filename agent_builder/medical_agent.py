@@ -13,12 +13,16 @@ from notified_center.EmailSender import EmailClient
 
 logger = logging.getLogger(__name__)
 email_client = EmailClient()
+
+
 class MedicalAgent:
     def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key):
-        # 1. تهيئة العميل والعيادة
-        self.client = ClientRepository.get_or_create(platform_id, clinic_id, page_id, sender_id)
+        self.client = ClientRepository.get_or_create(
+            platform_id, clinic_id, page_id, sender_id
+        )
+
         clinic = ClinicRepository.get_by_page_id(page_id)
-        if not clinic: 
+        if not clinic:
             raise ValueError("Clinic not found")
 
         self.context = {
@@ -27,22 +31,19 @@ class MedicalAgent:
             "services": clinic.services or "No services listed",
             "subservices": clinic.subservices or ""
         }
-        
+
         load_dotenv()
         FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY")
 
-        # 2. إعداد الموديل
         self.llm = ChatFireworks(
             model="accounts/fireworks/models/kimi-k2-instruct-0905",
             temperature=0,
             api_key=FIREWORKS_API_KEY,
         )
 
-        # 3. إعداد الأدوات
         self.booking_tool = create_booking_tool()
         self.llm_with_tools = self.llm.bind_tools([self.booking_tool])
 
-        # 4. إعداد الـ Prompts
         self.main_prompt = ChatPromptTemplate.from_messages([
             ("system", SYSTEM_PROMPT),
             ("human", USER_PROMPT)
@@ -52,76 +53,100 @@ class MedicalAgent:
         """
         معالجة الرسائل النصية والتحقق من استدعاء الأدوات
         """
-        self.now = datetime.now()
-        self.two_weeks_ago = self.now - timedelta(days=14)
 
-        if self.client.expiration_date < self.two_weeks_ago:
-            self.chat_summary = "the chat history has expired."
+        # -----------------------------
+        # 1️⃣ Chat expiration logic
+        # -----------------------------
+        now = datetime.now()
+        two_weeks_ago = now - timedelta(days=14)
+
+        expiration_date = self.client.expiration_date
+
+        if expiration_date is None:
+            chat_summary = self.client.chat_summary or ""
+        elif expiration_date < two_weeks_ago:
+            chat_summary = "the chat history has expired."
         else:
-            self.chat_summary = self.client.chat_summary or ""
+            chat_summary = self.client.chat_summary or ""
 
-        # تحضير الرسائل للموديل
+        # -----------------------------
+        # 2️⃣ Prepare model messages
+        # -----------------------------
         messages = self.main_prompt.format_messages(
             message=message,
-            summary=self.chat_summary,
+            summary=chat_summary,
             last_reply=self.client.last_bot_reply or "",
             **self.context
         )
 
-        # استدعاء الموديل
+        # -----------------------------
+        # 3️⃣ Call LLM
+        # -----------------------------
         response = self.llm_with_tools.invoke(messages)
-        
+
         reply = ""
         new_summary = self.client.chat_summary or ""
 
-        # --- المسار الأول: إذا قرر الموديل استخدام أداة الحجز (Tool Calling) ---
-        if hasattr(response, "tool_calls") and response.tool_calls:
+        # -----------------------------
+        # 4️⃣ Tool Calling path
+        # -----------------------------
+        if getattr(response, "tool_calls", None):
             print(f"[DEBUG] Tool Call Detected: {response.tool_calls[0]['name']}")
+
             for tool_call in response.tool_calls:
                 if tool_call.get("name") == "book_appointment":
                     args = tool_call.get("args", {})
-                    # تنفيذ الحجز فعلياً
                     result = self.booking_tool.invoke(args)
-                    
+
                     if isinstance(result, dict) and result.get("status") == "success":
-                        reply = f"✅ تم تأكيد حجزك بنجاح يا {args.get('patient_name', 'فندم')}!\n📍 الموعد: {args.get('appointment_date')}\n🏥 الخدمة: {args.get('service_name')}\n\nننتظرك في العيادة."
-                        new_summary = f"{new_summary} | [Action: Booked {args.get('service_name')}]"
+                        reply = (
+                            f"✅ تم تأكيد حجزك بنجاح يا {args.get('patient_name', 'فندم')}!\n"
+                            f"📍 الموعد: {args.get('appointment_date')}\n"
+                            f"🏥 الخدمة: {args.get('service_name')}\n\n"
+                            "ننتظرك في العيادة."
+                        )
+                        new_summary += f" | [Action: Booked {args.get('service_name')}]"
                     else:
-                        reply = "❌ عذراً، واجهت مشكلة في تسجيل الحجز. سأقوم بإبلاغ موظف الاستقبال فوراً ليتواصل معك."
+                        reply = (
+                            "❌ عذراً، واجهت مشكلة في تسجيل الحجز.\n"
+                            "سيقوم موظف الاستقبال بالتواصل معك قريباً."
+                        )
                     break
-            
-            # تحديث الذاكرة والرد فوراً
-            MemoryService.update(client=self.client, summary=new_summary, last_reply=reply)
+
+            MemoryService.update(
+                client=self.client,
+                summary=new_summary,
+                last_reply=reply
+            )
             return reply
 
-        # --- المسار الثاني: رد نصي عادي أو تحليل JSON مدمج ---
-        content = response.content.strip()
-        
-        # لو الموديل بعت JSON كـ نص بدلاً من Tool Call (Fallback)
-        if '"patient_name"' in content and '"appointment_date"' in content:
-             reply = "تمام، هل تؤكد حجزك بهذه البيانات؟" # رد بسيط لتجنب إظهار الـ JSON
+        # -----------------------------
+        # 5️⃣ Normal text / JSON fallback
+        # -----------------------------
+        content = (response.content or "").strip()
+
+        if not content.startswith("{") and not content.startswith("```"):
+            reply = content
         else:
             try:
-                # تنظيف الـ Markdown لو الموديل بعته كـ JSON
                 json_str = content
+
                 if "```json" in content:
                     json_str = content.split("```json")[1].split("```")[0].strip()
                 elif "```" in content:
                     json_str = content.split("```")[1].split("```")[0].strip()
-                
+
                 data = json.loads(json_str)
                 reply = data.get("reply", content)
                 new_summary = data.get("new_summary", new_summary)
-                
-            except Exception as e:
-                logger.warning(f"JSON Parsing failed, using raw response: {e}")
-                email_client.send_email(
-                    subject="Medical Agent JSON Parsing Error in medical agent file",
-                    body=f"Failed to parse JSON from model response:Error: {e}"
-                )
-                reply = "سيتم الرد عليك قريباً. شكراً جزيلاً"
 
-        # تحديث الذاكرة
+            except Exception as e:
+                logger.warning(f"JSON Parsing failed, using raw text: {e}")
+                reply = content
+
+        # -----------------------------
+        # 6️⃣ Save memory & return
+        # -----------------------------
         MemoryService.update(
             client=self.client,
             summary=new_summary,

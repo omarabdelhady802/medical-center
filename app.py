@@ -308,6 +308,12 @@ def delete_clinic_page(platform_id, clinic_id, page_id):
     flash("تم حذف الصفحة بنجاح", "success")
     return redirect(url_for('clinic_pages'))
 
+@app.route('/booking')
+@login_required
+def booking():
+    books = Booking.query.all()
+    return render_template('booking.html', books=books)
+
 
 # this route for logout
 @app.route('/logout')
