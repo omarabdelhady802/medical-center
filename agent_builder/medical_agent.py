@@ -3,7 +3,9 @@ import json
 import logging
 import os
 from dotenv import load_dotenv
-from langchain_fireworks import ChatFireworks
+
+# --- Gemini Imports ---
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from .repositories import ClinicRepository, ClientRepository
 from .services import MemoryService
@@ -14,10 +16,9 @@ from notified_center.EmailSender import EmailClient
 logger = logging.getLogger(__name__)
 email_client = EmailClient()
 
-
 class MedicalAgent:
-    def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key):
-        self.client = ClientRepository.get_or_create(
+    def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key=None):
+        self.client = ClientRepository.get_or_create( 
             platform_id, clinic_id, page_id, sender_id
         )
 
@@ -33,15 +34,18 @@ class MedicalAgent:
         }
 
         load_dotenv()
-        FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY")
+        OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-        self.llm = ChatFireworks(
-            model="accounts/fireworks/models/kimi-k2-instruct-0905",
+        self.llm = ChatOpenAI(
+           model="google/gemini-2.0-flash-001", # تقدر تختار أي موديل من OpenRouter
+            openai_api_key=OPENROUTER_API_KEY,
+            openai_api_base="https://openrouter.ai/api/v1",
             temperature=0,
-            api_key=FIREWORKS_API_KEY,
         )
 
         self.booking_tool = create_booking_tool()
+        
+        # ربط الأدوات بـ Gemini
         self.llm_with_tools = self.llm.bind_tools([self.booking_tool])
 
         self.main_prompt = ChatPromptTemplate.from_messages([
@@ -50,16 +54,8 @@ class MedicalAgent:
         ])
 
     def chat(self, message: str):
-        """
-        معالجة الرسائل النصية والتحقق من استدعاء الأدوات
-        """
-
-        # -----------------------------
-        # 1️⃣ Chat expiration logic
-        # -----------------------------
         now = datetime.now()
         two_weeks_ago = now - timedelta(days=14)
-
         expiration_date = self.client.expiration_date
 
         if expiration_date is None:
@@ -69,9 +65,6 @@ class MedicalAgent:
         else:
             chat_summary = self.client.chat_summary or ""
 
-        # -----------------------------
-        # 2️⃣ Prepare model messages
-        # -----------------------------
         messages = self.main_prompt.format_messages(
             message=message,
             summary=chat_summary,
@@ -79,19 +72,15 @@ class MedicalAgent:
             **self.context
         )
 
-        # -----------------------------
-        # 3️⃣ Call LLM
-        # -----------------------------
+        # --- Gemini Call ---
         response = self.llm_with_tools.invoke(messages)
 
         reply = ""
         new_summary = self.client.chat_summary or ""
 
-        # -----------------------------
-        # 4️⃣ Tool Calling path
-        # -----------------------------
-        if getattr(response, "tool_calls", None):
-            print(f"[DEBUG] Tool Call Detected: {response.tool_calls[0]['name']}")
+        # --- 4️⃣ Tool Calling path ---
+        if response.tool_calls:
+            print(f"[DEBUG] Gemini Tool Call Detected: {response.tool_calls[0]['name']}")
 
             for tool_call in response.tool_calls:
                 if tool_call.get("name") == "book_appointment":
@@ -123,14 +112,20 @@ class MedicalAgent:
         # -----------------------------
         # 5️⃣ Normal text / JSON fallback
         # -----------------------------
-        content = (response.content or "").strip()
+        
+        # حماية ضد خطأ AttributeError: 'list' object has no attribute 'strip'
+        if isinstance(response.content, list):
+            content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in response.content])
+        else:
+            content = str(response.content or "")
+
+        content = content.strip()
 
         if not content.startswith("{") and not content.startswith("```"):
             reply = content
         else:
             try:
                 json_str = content
-
                 if "```json" in content:
                     json_str = content.split("```json")[1].split("```")[0].strip()
                 elif "```" in content:

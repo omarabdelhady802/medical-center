@@ -3,6 +3,8 @@ import re
 import traceback
 from agent_builder.medical_agent import MedicalAgent
 from extraction.chatOcr import OCRAssistant
+from service.voice_transcription import VoiceService
+voice_service = VoiceService()
 from notified_center.EmailSender import EmailClient
 emailclient = EmailClient()
 
@@ -27,6 +29,9 @@ class BaseChatHandler:
         
         if message.type == "document":
             return self.handle_pdf_ocr(message)
+        if message.type == "voice" or message.type == "audio":
+            return self.handle_voice(message)
+                                              
         
         return self.handle_media(message.type, message.media)
 
@@ -176,12 +181,17 @@ class BaseChatHandler:
 
     def handle_media(self, msg_type, media):
         responses = {
-            "video": "برجاء ارسال رسالة نصية بدلاً من الفيديو.",
-            "audio": "برجاء ارسال رسالة نصية بدلاً من الملف الصوتي.",
-            "voice": "برجاء ارسال رسالة نصية بدلاً من الرسالة الصوتية.", 
+            "video": "برجاء ارسال رسالة نصية بدلاً من الفيديو.", 
             "location": "📍 تم استلام الموقع بنجاح."
         }
         return responses.get(msg_type, "📎 تم استلام المرفق.")
+    
+    def handle_voice(self,message):
+        audio_bytes = self.download_voice(message.media)
+        if not audio_bytes:
+            return self.send(message.sender_id, " فشل تحميل الرسالة الصوتية. حاول مرة أخرى.")
+        text = voice_service.transcribe(audio_bytes)
+        return self.handle_text(message.sender_id, text)
 
     def _get_image_ext(self, media):
         if not media: return ".jpg"
@@ -194,3 +204,4 @@ class BaseChatHandler:
     def download_image(self, media): raise NotImplementedError()
     def download_pdf(self, media): raise NotImplementedError()
     def send(self, sender_id, text): raise NotImplementedError()
+    def download_voice(self, media): raise NotImplementedError()

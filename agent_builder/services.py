@@ -58,4 +58,5 @@ class MemoryService:
                 subject="MemoryService Database Error in services file",
                 body=f"An error occurred while updating client memory: {e}"
             )
-            
+
+

@@ -38,3 +38,14 @@ def create_booking_tool():
             }
     
     return book_appointment
+
+
+@tool
+def check_numofexmantions(id: str) -> str:
+    result=BookingService.check_numofexmantions(id=id)
+    if result>0:
+        return f"لديك {result} فحوصات سابقة"
+    elif result<0:
+        return "لا يوجد لديك فحوصات سابقة"
+    else:
+        return "حدث خطأ في جلب بيانات الفحوصات السابقة"
