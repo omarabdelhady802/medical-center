@@ -103,3 +103,44 @@ class FacebookHandler(BaseChatHandler):
                 subject="Unexpected Error in Facebook PDF Download in facebook file",
                 body=f"An unexpected error occurred while downloading a PDF from Facebook: {e}")
             return None
+        
+    def download_voice(self, media):
+        """
+        تحميل تسجيل صوتي (Voice Note) من Facebook
+        
+        الـ Facebook بيبعت URL للملف الصوتي في الـ payload
+        غالباً بيكون بصيغة .mp4 أو .aac
+        """
+        try:
+            url = media.get("url")
+            if not url:
+                print("[ERROR] No URL in voice media payload")
+                return None
+            
+            print(f"[INFO] Downloading voice note from Facebook: {url[:60]}...")
+            
+            # تحميل الملف الصوتي (timeout 30 ثانية لضمان التحميل لو الملف طويل)
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            print(f"[INFO] Voice note downloaded successfully: {len(response.content)} bytes")
+            return response.content
+            
+        except requests.exceptions.Timeout:
+            print("[ERROR] Timeout while downloading voice note")
+            emailclient.send_email(
+                subject="Timeout Error in Facebook Voice Download",
+                body="A timeout occurred while downloading a voice note from Facebook.")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Failed to download voice from Facebook: {e}")
+            emailclient.send_email(
+                subject="Voice Download Error in Facebook",
+                body=f"An error occurred while downloading a voice note from Facebook: {e}")
+            return None
+        except Exception as e:
+            print(f"[ERROR] Unexpected error downloading voice: {e}")
+            emailclient.send_email(
+                subject="Unexpected Error in Facebook Voice Download",
+                body=f"An unexpected error occurred while downloading a voice note from Facebook: {e}")
+            return None    

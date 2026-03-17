@@ -32,6 +32,8 @@ services:
       - WAHA_DASHBOARD_USERNAME=admin
       - WAHA_DASHBOARD_PASSWORD=admin123
       - WAHA_API_KEY=key123
+      - WH_URL=http://flask_app:2005/waha_webhook
+      - WH_EVENTS=message.upsert,message.any
     volumes:
       - ./waha_1_sessions:/app/.sessions # حفظ جلسات الواتساب
     networks:
@@ -48,6 +50,8 @@ services:
       - WAHA_DASHBOARD_USERNAME=admin
       - WAHA_DASHBOARD_PASSWORD=admin123
       - WAHA_API_KEY=key123
+      - WH_URL=http://flask_app:2005/waha_webhook
+      - WH_EVENTS=message.upsert,message.any
     volumes:
       - ./waha_2_sessions:/app/.sessions # حفظ جلسات الواتساب
     networks:

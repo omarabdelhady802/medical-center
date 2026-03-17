@@ -1,0 +1,40 @@
+{% extends "base.html" %} {% block title %}لوحة التحكم{% endblock %} {% block content %}
+
+<div class="card shadow-sm">
+    <div class="card-header text-center">
+        <h4>البحث عن المرضى</h4>
+    </div>
+
+    <div class="card-body">
+
+        <!-- Search Form -->
+        <form method="POST" class="mb-4">
+            <div class="form-group">
+                <label>رقم الفحص (يمكن كتابة جزء منه)</label>
+                <input type="text" name="id_for_examination" class="form-control" placeholder="ادخل رقم الفحص أو جزء منه" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">بحث</button>
+        </form>
+
+        {% if patients %}
+        <hr>
+        <h5 class="text-center mb-3">نتائج البحث</h5>
+        {% for patient in patients %}
+        <div class="border p-2 mb-2">
+            <p><strong>رقم الفحص:</strong> {{ patient.id_for_examination }}</p>
+            <p><strong>عدد الكشوفات الحالي:</strong> {{ patient.num_examination }}</p>
+
+            <!-- Update Form -->
+            <form method="POST" action="{{ url_for('update_patient', patient_id=patient.id) }}">
+                <div class="form-group">
+                    <input type="number" name="num_examination" class="form-control" placeholder="ادخل العدد الجديد" required min="0">
+                </div>
+                <button type="submit" class="btn btn-success btn-block">تحديث</button>
+            </form>
+        </div>
+        {% endfor %} {% endif %}
+
+    </div>
+</div>
+
+{% endblock %}

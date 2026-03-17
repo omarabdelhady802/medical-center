@@ -3,6 +3,7 @@ import os
 import base64
 from platforms.basehundelr import BaseChatHandler
 from notified_center.EmailSender import EmailClient
+
 emailclient = EmailClient()
 
 class WAHAHandler(BaseChatHandler):
@@ -46,7 +47,6 @@ class WAHAHandler(BaseChatHandler):
             else:
                 print(f"[DEBUG] Message sent successfully to {sender_id}")
             
-            # ✅ التعديل هنا: لا ترجع كائن الـ response أبداً للمستخدم
             return None 
             
         except Exception as e:
@@ -56,12 +56,13 @@ class WAHAHandler(BaseChatHandler):
                 body=f"An error occurred while sending a message via WAHA: {e}")
             return None
 
-    def download_image(self, media):
-        """تحميل الصور/الملفات من WAHA"""
+    def download_media(self, media, media_type="media"):
+       
         try:
             if "data" in media:
                 return base64.b64decode(media["data"])
             
+            # 2. لو جاي URL
             url = media.get("url")
             if url:
                 if "localhost" in url:
@@ -69,17 +70,29 @@ class WAHAHandler(BaseChatHandler):
                     host = self.api_url.split("//")[1].split(":")[0]
                     url = url.replace("localhost", host)
                 
-                response = requests.get(url, headers=self.headers, timeout=15)
+                # تزويد الـ timeout لملفات الصوت والـ PDF لأن حجمها أكبر
+                request_timeout = 30 if media_type in ["pdf", "voice"] else 15
+                
+                response = requests.get(url, headers=self.headers, timeout=request_timeout)
                 response.raise_for_status()
                 return response.content
             
             return None
         except Exception as e:
-            print(f"[ERROR] WAHA Download Error: {e}")
+            print(f"[ERROR] WAHA {media_type} Download Error: {e}")
             emailclient.send_email(
-                subject="WAHA Download Error in waha file",
-                body=f"An error occurred while downloading media from WAHA: {e}")
+                subject=f"WAHA Download Error ({media_type}) in waha file",
+                body=f"An error occurred while downloading {media_type} from WAHA: {e}")
             return None
 
+    def download_image(self, media):
+        """تحميل الصور من WAHA"""
+        return self.download_media(media, "image")
+
     def download_pdf(self, media):
-        return self.download_image(media)
+        """تحميل ملفات PDF من WAHA"""
+        return self.download_media(media, "pdf")
+
+    def download_voice(self, media):
+        """تحميل الملفات الصوتية من WAHA"""
+        return self.download_media(media, "voice")

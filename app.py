@@ -415,6 +415,7 @@ def waha_webhook():
     """
     try:
         data = request.json
+        print(f"--- Received Message: {data} ---") #
         
         if not data:
             return jsonify({"status": "no_data"}), 200
@@ -477,8 +478,70 @@ def health():
     }), 200
 
 
+@app.route('/dashboard', methods=['GET', 'POST'])
+def dashboard():
+    patients = []
+
+    if request.method == 'POST':
+        search_term = request.form.get('id_for_examination')
+        
+        if search_term:
+            # Partial match search using SQLAlchemy `like`
+            patients = Patient.query.filter(
+                Patient.id_for_examination.like(f"%{search_term}%")
+            ).all()
+
+            if not patients:
+                flash("لا يوجد مرضى مطابقون", "danger")
+        else:
+            flash("ادخل قيمة للبحث", "warning")
+
+    return render_template('dashboard.html', patients=patients)
 
 
+@app.route('/update_patient/<int:patient_id>', methods=['POST'])
+def update_patient(patient_id):
+    patient = Patient.query.get_or_404(patient_id)
+
+    try:
+        new_value = int(request.form.get('num_examination'))
+        if new_value < 0:
+            flash("القيمة لا يمكن أن تكون سالبة", "danger")
+        else:
+            patient.num_examination = new_value
+            db.session.commit()
+            flash("تم التحديث بنجاح ✅", "success")
+    except:
+        flash("خطأ في الإدخال ❌", "danger")
+
+    return redirect(url_for('dashboard'))
+
+
+# --- Add new patient ---
+@app.route('/add_patient', methods=['GET', 'POST'])
+def add_patient():
+    if request.method == 'POST':
+        exam_id = request.form.get('id_for_examination')
+
+        # Prevent duplicates
+        existing_patient = Patient.query.filter_by(id_for_examination=exam_id).first()
+        if existing_patient:
+            flash("هذا المريض موجود بالفعل", "danger")
+            return redirect(url_for('add_patient'))
+
+        try:
+            new_patient = Patient(
+                id_for_examination=exam_id,
+                num_examination=0
+            )
+            db.session.add(new_patient)
+            db.session.commit()
+            flash("تم إضافة المريض بنجاح ✅", "success")
+            return redirect(url_for('dashboard'))
+        except:
+            flash("حدث خطأ أثناء الإضافة ❌", "danger")
+
+    return render_template('add_patient.html')
 
 
 if __name__ == "__main__":

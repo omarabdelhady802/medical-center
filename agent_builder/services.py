@@ -1,8 +1,9 @@
 import pandas as pd
 import os
 from datetime import datetime,timedelta, timezone
-from models.models import db ,Booking
+from models.models import db ,Booking,Patient
 from notified_center.EmailSender import EmailClient
+
 emailclient=EmailClient()
 class BookingService:
     
@@ -59,4 +60,34 @@ class MemoryService:
                 body=f"An error occurred while updating client memory: {e}"
             )
 
-
+class check_numofexmantionsService:
+    @staticmethod
+    def check_numofexmantions(id_for_examination):
+        try:
+            patient = Patient.query.filter_by(id_for_examination=id_for_examination).first()
+            
+            if not patient:
+                return "not_found"
+            
+           
+            return patient.num_examination
+            
+        except Exception as e:
+            print(f"❌ Database Error: {e}")
+            return "error"
+    @staticmethod
+    def decrement_examination(id_for_examination):
+        try:
+            patient = Patient.query.filter_by(id_for_examination=id_for_examination).first()
+            if patient:
+                # تحويل النص لرقم قبل الطرح لأن العمود String عندك
+                current_num = int(patient.num_examination or 0)
+                if current_num > 0:
+                    patient.num_examination = str(current_num - 1)
+                    db.session.commit()
+                    return True
+            return False
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Error decrementing: {e}")
+            return False    

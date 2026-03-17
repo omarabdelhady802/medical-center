@@ -1,41 +1,44 @@
 from models.models import ClinicPage, ClinicBranch, Client, db
 from sqlalchemy.exc import IntegrityError
 from notified_center.EmailSender import EmailClient
+
 email_client = EmailClient()
 
 
-
-
 class ClinicRepository:
+
     @staticmethod
     def get_by_page_id(page_id):
         """
-        Efficiently gets the Branch by searching for the Page ID.
-        Uses a JOIN so you don't have to query the database twice.
+        Gets the Branch by searching for the Page ID using a JOIN
+        so we don't query the database twice.
         """
         return db.session.query(ClinicBranch)\
             .join(ClinicPage, ClinicBranch.id == ClinicPage.clinic_id)\
             .filter(ClinicPage.page_id == page_id)\
             .first()
-    
+
     @staticmethod
     def get_by_id(clinic_id):
-        """Modern SQLAlchemy syntax for fetching by ID"""
         return db.session.get(ClinicBranch, clinic_id)
 
+
 class ClientRepository:
+
     @staticmethod
     def get_or_create(platform_id, clinic_id, page_id, sender_id):
         """
-        Handles the complex composite key for the Client.
+        Handles the composite key for the Client.
+        Tries to find the client first; creates them if not found.
+        Handles race conditions with rollback + re-fetch on IntegrityError.
         """
-        # 1. Try to find the client first
+        # 1. Try to find the client
         client = Client.query.filter_by(
             platform_id=platform_id,
             sender_id=sender_id,
-            page_id=page_id # Added page_id for extra safety with your composite key
+            page_id=page_id
         ).first()
-        
+
         # 2. If not found, create them
         if not client:
             try:
@@ -55,14 +58,17 @@ class ClientRepository:
                 db.session.rollback()
                 email_client.send_email(
                     subject="ClientRepository IntegrityError in repositories file",
-                    body=f"IntegrityError occurred while creating client for platform_id: {platform_id}, clinic_id: {clinic_id}, page_id: {page_id}, sender_id: {sender_id}"
+                    body=(
+                        f"IntegrityError occurred while creating client for "
+                        f"platform_id: {platform_id}, clinic_id: {clinic_id}, "
+                        f"page_id: {page_id}, sender_id: {sender_id}"
+                    )
                 )
-                
-                # Try fetching one last time
+                # Try fetching one last time after rollback
                 client = Client.query.filter_by(
                     platform_id=platform_id,
                     sender_id=sender_id,
                     page_id=page_id
                 ).first()
-        
+
         return client

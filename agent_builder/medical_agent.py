@@ -1,24 +1,45 @@
 from datetime import datetime, timedelta
-import json
 import logging
 import os
+import re
+import json
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
-# --- Gemini Imports ---
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from .repositories import ClinicRepository, ClientRepository
 from .services import MemoryService
-from .tools import create_booking_tool
-from .prompt import SYSTEM_PROMPT, USER_PROMPT
-from notified_center.EmailSender import EmailClient
+from .tools import book_appointment, check_numofexmantions
+from .prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
-email_client = EmailClient()
+
+TOOL_MAP = {
+    "book_appointment": book_appointment,
+    "check_numofexmantions": check_numofexmantions,
+}
+SUMMARY_TEMPLATES = {
+    "booking_success": "Action: BOOKING SUCCESS | Name: {patient_name} | Service: {service_name} | Date: {appointment_date} | Phone: {phone_number}",
+    "booking_failed": "Action: BOOKING FAILED | Attempted for {patient_name}",
+    "consultation_success": "Action: SUCCESS | Consultation deducted for ID {patient_id}. Left: {remaining}",
+    "balance_exhausted": "Action: FAILED | Patient {patient_id} has 0 balance.",
+    "patient_not_found": "Action: FAILED | Patient ID {patient_id} not found.",
+    "technical_error": "Action: ERROR | Server issue for ID {patient_id}."
+}
+
+# 1. تعريف الـ Schema لضمان دقة الـ JSON وتجنب الـ Hallucination
+class ChatResponse(BaseModel):
+    reply: str = Field(description="الرد النصي الموجه للمستخدم باللغة العربية")
+    summary: str = Field(description="ملخص المحادثة المحدث والبيانات المستخرجة")
 
 class MedicalAgent:
     def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key=None):
-        self.client = ClientRepository.get_or_create( 
+        load_dotenv()
+        
+        # الجزء الخاص بالبيانات (زي ما هو)
+        self.client_data = ClientRepository.get_or_create(
             platform_id, clinic_id, page_id, sender_id
         )
 
@@ -33,119 +54,93 @@ class MedicalAgent:
             "subservices": clinic.subservices or ""
         }
 
-        load_dotenv()
-        OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+        # إعداد الـ LLM (استخدام النسخة الأحدث والأكثر استقراراً)
+        key = api_key or "AIzaSyDDJdrvUqlxixGyRb5ZNl_cLyZWsSK685E"
+        if not key:
+            raise ValueError("Google Gemini API key is required")
 
-        self.llm = ChatOpenAI(
-           model="google/gemini-2.0-flash-001", # تقدر تختار أي موديل من OpenRouter
-            openai_api_key=OPENROUTER_API_KEY,
-            openai_api_base="https://openrouter.ai/api/v1",
-            temperature=0,
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-flash-latest", # تم التحديث لأفضل نسخة تدعم Structured Output
+            google_api_key=key
         )
 
-        self.booking_tool = create_booking_tool()
+        # ربط الأدوات (Tools)
+        self.llm_with_tools = llm.bind_tools([book_appointment, check_numofexmantions])
         
-        # ربط الأدوات بـ Gemini
-        self.llm_with_tools = self.llm.bind_tools([self.booking_tool])
+        # ربط الـ Structured Output للمحادثات العادية
+        self.structured_llm = llm.with_structured_output(ChatResponse)
 
-        self.main_prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
-            ("human", USER_PROMPT)
-        ])
-
-    def chat(self, message: str):
+    def _get_history_summary(self):
         now = datetime.now()
         two_weeks_ago = now - timedelta(days=14)
-        expiration_date = self.client.expiration_date
+        expiration = self.client_data.expiration_date
 
-        if expiration_date is None:
-            chat_summary = self.client.chat_summary or ""
-        elif expiration_date < two_weeks_ago:
-            chat_summary = "the chat history has expired."
-        else:
-            chat_summary = self.client.chat_summary or ""
+        if expiration and expiration < two_weeks_ago:
+            return "the chat history has expired."
+        return self.client_data.chat_summary or "No previous history."
 
-        messages = self.main_prompt.format_messages(
-            message=message,
-            summary=chat_summary,
-            last_reply=self.client.last_bot_reply or "",
-            **self.context
-        )
+    def chat(self, message: str):
+        chat_summary = self._get_history_summary()
+        full_system_prompt = SYSTEM_PROMPT.format(**self.context)
 
-        # --- Gemini Call ---
-        response = self.llm_with_tools.invoke(messages)
+        messages = [
+            SystemMessage(content=full_system_prompt),
+            HumanMessage(content=f"Summary: {chat_summary}\nLast Reply: {self.client_data.last_bot_reply}\nUser: {message}")
+        ]
 
-        reply = ""
-        new_summary = self.client.chat_summary or ""
+        try:
+            # أولاً: بننادي الـ LLM مع الأدوات عشان نشوف لو عايز يحجز أو يستعلم
+            response = self.llm_with_tools.invoke(messages)
+            
+            # --- مراقبة التكلفة في كل رسالة ---
+            usage = getattr(response, "usage_metadata", None)
+            if usage:
+                print(f"\n📊 TOKENS USAGE | Input: {usage.get('input_tokens')} | Output: {usage.get('output_tokens')} | Total: {usage.get('total_tokens')}")
 
-        # --- 4️⃣ Tool Calling path ---
-        if response.tool_calls:
-            print(f"[DEBUG] Gemini Tool Call Detected: {response.tool_calls[0]['name']}")
+            reply = ""
+            new_summary = self.client_data.chat_summary or ""
 
-            for tool_call in response.tool_calls:
-                if tool_call.get("name") == "book_appointment":
-                    args = tool_call.get("args", {})
-                    result = self.booking_tool.invoke(args)
+            # الحالة الأولى: الـ LLM قرر يستخدم Tool
+            if response.tool_calls:
+                tool_call = response.tool_calls[0]
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
 
-                    if isinstance(result, dict) and result.get("status") == "success":
-                        reply = (
-                            f"✅ تم تأكيد حجزك بنجاح يا {args.get('patient_name', 'فندم')}!\n"
-                            f"📍 الموعد: {args.get('appointment_date')}\n"
-                            f"🏥 الخدمة: {args.get('service_name')}\n\n"
-                            "ننتظرك في العيادة."
-                        )
-                        new_summary += f" | [Action: Booked {args.get('service_name')}]"
-                    else:
-                        reply = (
-                            "❌ عذراً، واجهت مشكلة في تسجيل الحجز.\n"
-                            "سيقوم موظف الاستقبال بالتواصل معك قريباً."
-                        )
-                    break
+                func = TOOL_MAP.get(tool_name)
+                result = func.invoke(tool_args) if func else None
 
+                if isinstance(result, dict):
+                    reply = result.get("message", "تمت معالجة طلبك.")
+
+                    # 2. تحديث الـ Summary باستخدام الـ Templates
+                    label = result.get("label")
+                    template = SUMMARY_TEMPLATES.get(label)
+                    
+                    if template:
+                        try:
+                            # دمج البيانات في القالب المخصص للـ label
+                            log_entry = template.format(**result)
+                            new_summary = (self.client_data.chat_summary or "") + f" | {log_entry}"
+                        except Exception as e:
+                            logger.error(f"Format Error: {e}")
+                else:
+                    reply = result if isinstance(result, str) else "❌ حدث خطأ فني."
+
+            # الحالة الثانية: محادثة عادية (نجبره يرجع Structured Output)
+            else:
+                structured_response = self.structured_llm.invoke(messages)
+                reply = structured_response.reply
+                new_summary = structured_response.summary
+
+            # تحديث الذاكرة (Memory)
             MemoryService.update(
-                client=self.client,
+                client=self.client_data,
                 summary=new_summary,
                 last_reply=reply
             )
+
             return reply
 
-        # -----------------------------
-        # 5️⃣ Normal text / JSON fallback
-        # -----------------------------
-        
-        # حماية ضد خطأ AttributeError: 'list' object has no attribute 'strip'
-        if isinstance(response.content, list):
-            content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in response.content])
-        else:
-            content = str(response.content or "")
-
-        content = content.strip()
-
-        if not content.startswith("{") and not content.startswith("```"):
-            reply = content
-        else:
-            try:
-                json_str = content
-                if "```json" in content:
-                    json_str = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    json_str = content.split("```")[1].split("```")[0].strip()
-
-                data = json.loads(json_str)
-                reply = data.get("reply", content)
-                new_summary = data.get("new_summary", new_summary)
-
-            except Exception as e:
-                logger.warning(f"JSON Parsing failed, using raw text: {e}")
-                reply = content
-
-        # -----------------------------
-        # 6️⃣ Save memory & return
-        # -----------------------------
-        MemoryService.update(
-            client=self.client,
-            summary=new_summary,
-            last_reply=reply
-        )
-
-        return reply
+        except Exception as e:
+            logger.error(f"Error in Agent Chat: {e}")
+            return "عذراً، واجهت مشكلة تقنية. حاول لاحقاً."

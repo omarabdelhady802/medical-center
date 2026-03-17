@@ -111,3 +111,10 @@ class Booking(db.Model):
     date = db.Column(db.String(100))
     phone_number = db.Column(db.String(50))
     booking_time = db.Column(db.DateTime, default=datetime.now(egypt_tz))
+
+class Patient(db.Model):
+    __tablename__ = "patient"
+
+    id = db.Column(db.Integer, primary_key=True)
+    id_for_examination = db.Column(db.String(120), nullable=False)
+    num_examination = db.Column(db.Integer, default=0)

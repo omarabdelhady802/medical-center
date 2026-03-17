@@ -105,4 +105,6 @@ llama-parse
 pymupdf
 opencv-python
 Flask-Migrate
+Cython
+langchain_google_genai
 

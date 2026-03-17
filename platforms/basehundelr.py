@@ -6,7 +6,9 @@ from extraction.chatOcr import OCRAssistant
 from service.voice_transcription import VoiceService
 voice_service = VoiceService()
 from notified_center.EmailSender import EmailClient
+from agent_builder.services import MemoryService
 emailclient = EmailClient()
+memory_service = MemoryService()
 
 class BaseChatHandler:
     platform_id = None
@@ -42,9 +44,10 @@ class BaseChatHandler:
             clinic_id=self.clinic_page.clinic_id,
             page_id=self.page_id,
             sender_id=sender_id,
-            api_key=self.api_key
+            
         )
         return agent.chat(text)
+        
 
     def handle_image_ocr(self, message):
         """معالجة الصور بـ OCR"""
@@ -90,101 +93,49 @@ class BaseChatHandler:
 
     # ================== المساعدات الذكية (Logic) ==================
 
-    def _parse_ocr_output(self, output):
-        """تحويل مخرج الـ OCR لبيانات حتى لو نص عادي"""
-        try:
-            if not output: return None
-            output_str = str(output).strip()
-
-            # 1. محاولة استخراج JSON لو موجود
-            found_arrays = re.findall(r'\[[\s\S]*?\]', output_str)
-            if found_arrays:
-                all_data = []
-                for array_str in found_arrays:
-                    try:
-                        data = json.loads(array_str)
-                        if isinstance(data, list): all_data.extend(data)
-                    except: continue
-                if all_data: return all_data
-
-            # 2. لو المخرج نص عادي
-            if len(output_str) > 10:
-                return [{"document_type": "PRESCRIPTION", "raw_text": output_str}]
-            
-            return None
-        except Exception as e:
-            print(f"[ERROR] Parsing failed: {e}")
-            emailclient.send_email(
-                subject="OCR Output Parsing Error in parse file",
-                body=f"An error occurred while parsing OCR output: {e}")
-            return None
-
-    def _get_document_type(self, parsed_data):
-        """تحديد النوع بمرونة عالية"""
-        if not parsed_data:
-            return "UNKNOWN"
-
-        full_text_data = str(parsed_data).upper()
-
-        if "PRESCRIPTION" in full_text_data or "روشتة" in full_text_data:
-            return "PRESCRIPTION"
-        
-        if "SCAN" in full_text_data or "X-RAY" in full_text_data or "أشعة" in full_text_data:
-            return "SCAN"
-        
-        if "LAB" in full_text_data or "RESULT" in full_text_data or "تحليل" in full_text_data:
-            return "LAB_RESULT"
-
-        if "SPAM" in full_text_data:
-            return "SPAM"
-
-        return "UNKNOWN"
-
     def _process_ocr_result(self, result, sender_id):
-        output = result.get("output", "")
-        if not output:
-            self.send(sender_id, "❌ الملف فارغ أو غير واضح.")
-            return # ارجع None وليس مخرج الـ send
+        try:
+            output = result.get("output", "")
+            if not output:
+                self.send(sender_id, "❌ الملف فارغ أو غير واضح.")
+                return
 
-        output_str = str(output).upper()
+            output_str = str(output).upper()
 
-        # 1. أولوية الروشتة (حتى لو الملف فيه حاجات تانية)
-        if "PRESCRIPTION" in output_str:
-            print("[ACTION] Prescription detected, analyzing...")
-            try:
-                prescription_data = json.dumps(output, ensure_ascii=False)
-            except:
-                prescription_data = str(output)
-            
-            # نأخذ الرد من الـ Agent ونرسله
-            agent_reply = self.handle_text(sender_id, f"[PRESCRIPTION_ANALYSIS]\n{prescription_data}")
-            self.send(sender_id, agent_reply)
-            return
+            if "SPAM" in output_str:
+                self.send(sender_id, "⚠️ عذراً، هذا المستند لا يبدو ملفاً طبياً.")
+                return
 
-        # 2. التحاليل
-        if "LAB_RESULT" in output_str:
-            self.send(sender_id, "📄 هذه نتائج تحاليل طبية، يرجى استشارة الطبيب. هل تحب حجز موعد لمراجعتها؟")
-            return
+            # --- 2. حالة التحاليل أو الأشعة (الـ Logic المطلوب) ---
+            if "LAB_RESULT" in output_str or "SCAN" in output_str or "PRESCRIPTION" in output_str:
+                try:
+                    medical_data=json.dumps(output,ensure_ascii=False)
+                except:
+                    medical_data=str(output)
+                
+                if "LAB_RESULT" in output_str:
+                    tag="[LAB_ANALYSIS]"
+                elif "SCAN" in output_str:
+                    tag="[SCAN_ANALYSIS]"    
+                else:
+                    tag="[PRESCRIPTION_ANALYSIS]"
+                agent_reply=self.handle_text(sender_id,f"{tag}\n{medical_data}")
+                self.send(sender_id,agent_reply)
+                return
+           
 
-        # 3. الأشعة
-        if "SCAN" in output_str:
-            self.send(sender_id, "☢️ هذا تقرير أشعة. يرجى عرضه على الطبيب المختص.")
-            return
+            self.send(sender_id, "📄 استلمت مستندك، كيف يمكنني مساعدتك؟")
 
-        # 4. سبام
-        if "SPAM" in output_str:
-            self.send(sender_id, "⚠️ عذراً، لا يمكنني معالجة هذه الصورة كروشتة طبية.")
-            return
-
-        self.send(sender_id, "📄 استلمت مستندك، كيف يمكنني مساعدتك؟")
-        return
-
-    def handle_media(self, msg_type, media):
-        responses = {
-            "video": "برجاء ارسال رسالة نصية بدلاً من الفيديو.", 
-            "location": "📍 تم استلام الموقع بنجاح."
-        }
-        return responses.get(msg_type, "📎 تم استلام المرفق.")
+        except Exception as e:
+            # الحفاظ على الـ Error Logging
+            print(f"[ERROR] Process OCR failed: {e}")
+            emailclient.send_email(
+                subject="OCR Process Error",
+                body=f"Error processing result for {sender_id}: {e}"
+            )
+            traceback.print_exc()
+            return self.send(sender_id, "❌ حدث خطأ أثناء معالجة الملف.")
+        
     
     def handle_voice(self,message):
         audio_bytes = self.download_voice(message.media)
