@@ -178,11 +178,6 @@ nest_asyncio.apply()
 
 class OCRAssistant:
     def __init__(self):
-        self.model = ChatFireworks(
-            model="accounts/fireworks/models/kimi-k2-instruct-0905",
-            temperature=0,
-            api_key=os.getenv("fw_49sCkqd3yVQTGuCL4cmEKN")
-        )
         self.executor = ThreadPoolExecutor(max_workers=2)
 
     def reply(self, messenger_id: str, user_message: dict):
@@ -196,10 +191,6 @@ class OCRAssistant:
                 ext = user_message.get("image_ext", ".jpg")
                 return self._run_ocr_binary(user_message["image_binary"], ext, "image", messenger_id)
 
-            if "text" in user_message:
-                messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_message["text"])]
-                response = self.model.invoke(messages)
-                return {"output": response.content, "type": "text"}
 
             return {"output": "Please send text, image, or PDF.", "type": "error"}
 

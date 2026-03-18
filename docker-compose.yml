@@ -6,6 +6,8 @@ services:
     build: .
     container_name: medical_flask_app
     restart: always
+    env_file:
+      - .env
     ports:
       - "2005:2005"
     volumes:

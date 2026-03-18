@@ -46,7 +46,7 @@ def book_appointment(
 @tool
 def check_numofexmantions(patient_id: str) -> dict:
     """
-    Check and consume one free consultation session using the Patient ID.
+    Check and consume free consultation session or labs and scans results using the Patient ID.
     Returns a dictionary with status, message for the patient, and a label for logging.
 
     """
