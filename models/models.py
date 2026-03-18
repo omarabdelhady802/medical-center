@@ -2,8 +2,9 @@
 from flask_login import UserMixin
 from sqlalchemy import PrimaryKeyConstraint, ForeignKeyConstraint
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+from notified_center import EmailSender
 
 egypt_tz = pytz.timezone("Africa/Cairo")
 
@@ -118,3 +119,42 @@ class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     id_for_examination = db.Column(db.String(120), nullable=False)
     num_examination = db.Column(db.Integer, default=0)
+
+DEFAULT_COUNT = 3000
+RESET_DAYS = 30  # reset every 30 days
+
+class RequestCounter(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    count = db.Column(db.Integer, default=DEFAULT_COUNT, nullable=False)
+    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
+    last_reset = db.Column(db.DateTime, default=datetime.utcnow)  # track last 30-day reset
+
+    def decrement(self):
+        """Decrement counter, notify if zero, and reset if needed."""
+        self.check_periodic_reset()  # reset if 30 days passed
+
+        if self.count > 0:
+            self.count -= 1
+
+        if self.count == 0:
+            self.notify()
+            self.count = DEFAULT_COUNT  # reset counter after notification
+
+        self.last_updated = datetime.utcnow()
+        db.session.commit()
+
+    def notify(self):
+        """Send email notification."""
+        EmailSender.EmailClient.send_email(
+            subject="Billing rate",
+            body="This is a reminder for exceeding the limit"
+        )
+
+    def check_periodic_reset(self):
+        """Reset counter every 30 days."""
+        now = datetime.utcnow()
+        if now - self.last_reset >= timedelta(days=RESET_DAYS):
+            self.count = DEFAULT_COUNT
+            self.last_reset = now
+            self.last_updated = now
+            db.session.commit()

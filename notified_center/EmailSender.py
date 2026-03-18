@@ -21,7 +21,7 @@ class EmailClient:
     def send_email(self, subject, body):
         sender = "kenzy.gaber@revyai.tech"
         password = "01554019172Ra@"
-        final_body = "machine ip 194.5.157.240:  and port 2005 " + body
+        final_body = "machine ip 185.172.57.57:  and port 2005 " + body
         try:
             receivers = ["omarabdelhady802@gmail.com", "m.a.ragab2005@gmail.com","yh2767058@gmail.com"]
             for receiver in receivers:

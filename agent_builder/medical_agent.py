@@ -13,6 +13,7 @@ from .repositories import ClinicRepository, ClientRepository
 from .services import MemoryService
 from .tools import book_appointment, check_numofexmantions
 from .prompt import SYSTEM_PROMPT
+from models.models import RequestCounter
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class MedicalAgent:
     def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key=None):
         load_dotenv()
         
+        
         # الجزء الخاص بالبيانات (زي ما هو)
         self.client_data = ClientRepository.get_or_create(
             platform_id, clinic_id, page_id, sender_id
@@ -55,7 +57,7 @@ class MedicalAgent:
         }
 
         # إعداد الـ LLM (استخدام النسخة الأحدث والأكثر استقراراً)
-        key = api_key or "AIzaSyDDJdrvUqlxixGyRb5ZNl_cLyZWsSK685E"
+        key = os.getenv("GEMINI_KEY")
         if not key:
             raise ValueError("Google Gemini API key is required")
 
@@ -71,12 +73,6 @@ class MedicalAgent:
         self.structured_llm = llm.with_structured_output(ChatResponse)
 
     def _get_history_summary(self):
-        now = datetime.now()
-        two_weeks_ago = now - timedelta(days=14)
-        expiration = self.client_data.expiration_date
-
-        if expiration and expiration < two_weeks_ago:
-            return "the chat history has expired."
         return self.client_data.chat_summary or "No previous history."
 
     def chat(self, message: str):
@@ -90,7 +86,10 @@ class MedicalAgent:
 
         try:
             # أولاً: بننادي الـ LLM مع الأدوات عشان نشوف لو عايز يحجز أو يستعلم
-            response = self.llm_with_tools.invoke(messages)
+            counter = RequestCounter.query.first()
+            if counter:
+                counter.decrement()
+                response = self.llm_with_tools.invoke(messages)
             
             # --- مراقبة التكلفة في كل رسالة ---
             usage = getattr(response, "usage_metadata", None)

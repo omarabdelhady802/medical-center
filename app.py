@@ -35,6 +35,12 @@ login_manager = LoginManager(app)
 db.init_app(app)
 migrate = Migrate(app, db)   # ✅ مهم جدًا
 
+with app.app_context():
+    db.create_all()  # create tables if not exist
+    if not RequestCounter.query.first():
+        counter = RequestCounter(count=3000)
+        db.session.add(counter)
+        db.session.commit()
 
 
 
@@ -545,4 +551,4 @@ def add_patient():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", debug=True, port=2005, threaded=True)
+    app.run(host="0.0.0.0", debug=False, port=2005, threaded=True)
