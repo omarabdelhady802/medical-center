@@ -1,6 +1,8 @@
-waha_1/
-waha_2/
+waha_1_sessions/
+waha_2_sessions/
+instance/medical.db
 __pycache__/
 *.pyc
 .env
 .git
+*.pyo

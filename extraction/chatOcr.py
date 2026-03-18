@@ -181,7 +181,7 @@ class OCRAssistant:
         self.model = ChatFireworks(
             model="accounts/fireworks/models/kimi-k2-instruct-0905",
             temperature=0,
-            api_key="fw_3ZW7p43kN9pYXjKotWkg7UWj"
+            api_key=os.getenv("fw_49sCkqd3yVQTGuCL4cmEKN")
         )
         self.executor = ThreadPoolExecutor(max_workers=2)
 

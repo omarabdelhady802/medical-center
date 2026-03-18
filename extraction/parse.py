@@ -185,7 +185,7 @@ Every output MUST be a JSON array containing objects with these 4 fields:
 
 
 parser = LlamaParse(
-    api_key="llx-g13trFlVAeD6sCl3LavrcQLAIY0eEmlj6qVsvruTLhQHzmN7",
+    api_key=os.getenv("LLAMA_KEY"),
     parse_mode="parse_page_with_lvm",
     model="openai-gpt4o",
     high_res_ocr=True,

@@ -388,10 +388,10 @@ def fb_webhook():
                     continue
 
                 # ✅ معالجة الرسالة في thread منفصل
-                def process_fb_message():
+                def process_fb_message(captured_msg=msg,captured_page_id=page_id):
                     try:
                         with app.app_context():
-                            process_message(FacebookHandler, 1, page_id, msg)
+                            process_message(FacebookHandler, 1, captured_page_id,captured_msg)
                     except Exception as e:
                         print(f"[ERROR] Facebook message processing failed: {e}")
                         import traceback
@@ -445,10 +445,10 @@ def waha_webhook():
             return jsonify({"status": "no_bot_id"}), 200
 
         # ✅ معالجة الرسالة في thread منفصل
-        def process_waha_message():
+        def process_waha_message(captured_msg=msg,captured_bot_id=bot_phone_id):
             try:
                 with app.app_context():
-                    process_message(WAHAHandler, 2, bot_phone_id, msg)
+                    process_message(WAHAHandler, 2, captured_bot_id, captured_msg)
             except Exception as e:
                 print(f"[ERROR] WAHA message processing failed: {e}")
                 import traceback

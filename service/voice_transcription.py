@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class VoiceService:
     def __init__(self):
-        self.mistral_api_key = "lL60Z9ACii046sbxzS8BzBxlcCy9cbKg"
+        self.mistral_api_key = os.getenv("Mistral_KEY")
 
     def transcribe(self, audio_bytes):
         if not audio_bytes:
