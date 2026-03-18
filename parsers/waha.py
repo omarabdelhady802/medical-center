@@ -25,11 +25,16 @@ def parse_waha_message(payload):
             )
             return None
 
+        # 3. تجاهل رسائل المجموعات والنشرات الإخبارية والقنوات
+        if "@g.us" in sender_id or "@newsletter" in sender_id or "@broadcast" in sender_id:
+            logger.debug(f"Ignoring non-personal message from: {sender_id}")
+            return None
+
         has_media = payload.get("hasMedia", False)
         media = payload.get("media")
         msg_body = payload.get("body")
 
-        # 3. معالجة الميديا (صور، فيديو، صوت، ملفات)
+        # 4. معالجة الميديا (صور، فيديو، صوت، ملفات)
         if has_media and media:
             try:
                 mimetype = media.get("mimetype", "")

@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 import logging
 import os
-import re
 import json
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -12,22 +11,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .repositories import ClinicRepository, ClientRepository
 from .services import MemoryService
 from .tools import book_appointment, check_numofexmantions
-from .prompt import SYSTEM_PROMPT
-from models.models import RequestCounter
+from .prompt import SYSTEM_PROMPT, USER_PROMPT
 
 logger = logging.getLogger(__name__)
 
 TOOL_MAP = {
     "book_appointment": book_appointment,
     "check_numofexmantions": check_numofexmantions,
-}
-SUMMARY_TEMPLATES = {
-    "booking_success": "Action: BOOKING SUCCESS | Name: {patient_name} | Service: {service_name} | Date: {appointment_date} | Phone: {phone_number}",
-    "booking_failed": "Action: BOOKING FAILED | Attempted for {patient_name}",
-    "consultation_success": "Action: SUCCESS | Consultation deducted for ID {patient_id}. Left: {remaining}",
-    "balance_exhausted": "Action: FAILED | Patient {patient_id} has 0 balance.",
-    "patient_not_found": "Action: FAILED | Patient ID {patient_id} not found.",
-    "technical_error": "Action: ERROR | Server issue for ID {patient_id}."
 }
 
 # 1. تعريف الـ Schema لضمان دقة الـ JSON وتجنب الـ Hallucination
@@ -38,7 +28,6 @@ class ChatResponse(BaseModel):
 class MedicalAgent:
     def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key=None):
         load_dotenv()
-        
         
         # الجزء الخاص بالبيانات (زي ما هو)
         self.client_data = ClientRepository.get_or_create(
@@ -73,6 +62,12 @@ class MedicalAgent:
         self.structured_llm = llm.with_structured_output(ChatResponse)
 
     def _get_history_summary(self):
+        now = datetime.now()
+        two_weeks_ago = now - timedelta(days=14)
+        expiration = self.client_data.expiration_date
+
+        if expiration and expiration < two_weeks_ago:
+            return "the chat history has expired."
         return self.client_data.chat_summary or "No previous history."
 
     def chat(self, message: str):
@@ -81,15 +76,16 @@ class MedicalAgent:
 
         messages = [
             SystemMessage(content=full_system_prompt),
-            HumanMessage(content=f"Summary: {chat_summary}\nLast Reply: {self.client_data.last_bot_reply}\nUser: {message}")
+            HumanMessage(content=USER_PROMPT.format(
+                summary=chat_summary,
+                last_reply=self.client_data.last_bot_reply or "",
+                message=message
+            ))
         ]
 
         try:
             # أولاً: بننادي الـ LLM مع الأدوات عشان نشوف لو عايز يحجز أو يستعلم
-            counter = RequestCounter.query.first()
-            if counter:
-                counter.decrement()
-                response = self.llm_with_tools.invoke(messages)
+            response = self.llm_with_tools.invoke(messages)
             
             # --- مراقبة التكلفة في كل رسالة ---
             usage = getattr(response, "usage_metadata", None)
@@ -108,22 +104,25 @@ class MedicalAgent:
                 func = TOOL_MAP.get(tool_name)
                 result = func.invoke(tool_args) if func else None
 
-                if isinstance(result, dict):
-                    reply = result.get("message", "تمت معالجة طلبك.")
+                if tool_name == "book_appointment":
+                    reply = result.get("message", "❌ حدث خطأ غير متوقع.")
+                    if result.get("status") == "success":
+                        new_summary = (self.client_data.chat_summary or "") + \
+                            f" | Action: Booking SUCCESS - {result.get('service_name')} on {result.get('appointment_date')}"
 
-                    # 2. تحديث الـ Summary باستخدام الـ Templates
-                    label = result.get("label")
-                    template = SUMMARY_TEMPLATES.get(label)
-                    
-                    if template:
-                        try:
-                            # دمج البيانات في القالب المخصص للـ label
-                            log_entry = template.format(**result)
-                            new_summary = (self.client_data.chat_summary or "") + f" | {log_entry}"
-                        except Exception as e:
-                            logger.error(f"Format Error: {e}")
-                else:
-                    reply = result if isinstance(result, str) else "❌ حدث خطأ فني."
+                elif tool_name == "check_numofexmantions":
+                    reply = result.get("message", "❌ حدث خطأ أثناء التحقق.")
+                    label = result.get("label", "")
+                    patient_id = result.get("patient_id", tool_args.get("patient_id", ""))
+                    if label == "consultation_success":
+                        new_summary = (self.client_data.chat_summary or "") + \
+                            f" | Action: Consultation SUCCESS - patient_id={patient_id} remaining={result.get('remaining')}"
+                    elif label == "patient_not_found":
+                        new_summary = (self.client_data.chat_summary or "") + \
+                            f" | Action: Consultation FAILED - patient_id={patient_id} not found"
+                    elif label == "balance_exhausted":
+                        new_summary = (self.client_data.chat_summary or "") + \
+                            f" | Action: Consultation FAILED - patient_id={patient_id} balance exhausted"
 
             # الحالة الثانية: محادثة عادية (نجبره يرجع Structured Output)
             else:
