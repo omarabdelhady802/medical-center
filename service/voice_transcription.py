@@ -47,4 +47,4 @@ class VoiceService:
 
         except Exception as e:
            logger.error(f"Voxtral transcription failed: {e}")
-           return ""
+           return "برجاء ارسال الرساله الصوتيه مره اخري"
