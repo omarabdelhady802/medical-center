@@ -12,7 +12,7 @@ from .repositories import ClinicRepository, ClientRepository
 from .services import MemoryService
 from .tools import book_appointment, check_numofexmantions
 from .prompt import SYSTEM_PROMPT, USER_PROMPT
-
+from models.models import RequestCounter
 logger = logging.getLogger(__name__)
 
 TOOL_MAP = {
@@ -62,12 +62,6 @@ class MedicalAgent:
         self.structured_llm = llm.with_structured_output(ChatResponse)
 
     def _get_history_summary(self):
-        now = datetime.now()
-        two_weeks_ago = now - timedelta(days=14)
-        expiration = self.client_data.expiration_date
-
-        if expiration and expiration < two_weeks_ago:
-            return "the chat history has expired."
         return self.client_data.chat_summary or "No previous history."
 
     def chat(self, message: str):
@@ -85,7 +79,10 @@ class MedicalAgent:
 
         try:
             # أولاً: بننادي الـ LLM مع الأدوات عشان نشوف لو عايز يحجز أو يستعلم
-            response = self.llm_with_tools.invoke(messages)
+            counter = RequestCounter.query.first()
+            if counter:
+                counter.decrement()
+                response = self.llm_with_tools.invoke(messages)
             
             # --- مراقبة التكلفة في كل رسالة ---
             usage = getattr(response, "usage_metadata", None)
