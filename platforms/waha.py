@@ -14,11 +14,11 @@ class WAHAHandler(BaseChatHandler):
         
         # 🔹 Hard-coded Distribution
         if clinic_page.clinic_id == 1:
-            self.api_url = "http://waha_1:3000"
+            self.api_url = "http://waha_container_1:3001"
         elif clinic_page.clinic_id == 2:
-            self.api_url = "http://waha_2:3000"
+            self.api_url = "http://waha_container_2:3002"
         else:
-            self.api_url = "http://waha_1:3000"
+            self.api_url = "http://waha_container_1:3000" 
           
         self.clean_key = str(self.api_key).strip() if self.api_key else ""
         
@@ -41,7 +41,7 @@ class WAHAHandler(BaseChatHandler):
         }
         
         try:
-            response = requests.post(url, json=payload, headers=self.headers, timeout=10)
+            response = requests.post(url, json=payload, headers=self.headers, timeout=20)
             if response.status_code not in [200, 201]:
                 print(f"[ERROR] WAHA returned {response.status_code}: {response.text}")
             else:

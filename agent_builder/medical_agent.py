@@ -1,9 +1,11 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 import os
 import json
+import time
+
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -13,6 +15,7 @@ from .services import MemoryService
 from .tools import book_appointment, check_numofexmantions
 from .prompt import SYSTEM_PROMPT, USER_PROMPT
 from models.models import RequestCounter
+
 logger = logging.getLogger(__name__)
 
 TOOL_MAP = {
@@ -20,16 +23,45 @@ TOOL_MAP = {
     "check_numofexmantions": check_numofexmantions,
 }
 
-# 1. تعريف الـ Schema لضمان دقة الـ JSON وتجنب الـ Hallucination
 class ChatResponse(BaseModel):
-    reply: str = Field(description="الرد النصي الموجه للمستخدم باللغة العربية")
-    summary: str = Field(description="ملخص المحادثة المحدث والبيانات المستخرجة")
+    reply: str
+    summary: str
+
+
+def clean_json_response(content: str) -> str:
+    content = content.strip()
+    if content.startswith("```"):
+        parts = content.split("```")
+        content = parts[1]
+        if content.startswith("json"):
+            content = content[4:]
+    return content.strip()
+
+
+def safe_merge_summary(old_summary: str, new_summary: str) -> str:
+    """
+    حماية الـ summary من الحذف.
+    لو الموديل حذف أكتر من 20% من الـ summary القديم،
+    نرجع القديم ونضيف الجديد عليه.
+    """
+    if not old_summary:
+        return new_summary
+
+    if not new_summary:
+        return old_summary
+
+    # لو الـ summary الجديد أقصر بكتير من القديم → الموديل حذف حاجة
+    if len(new_summary) < len(old_summary) * 0.8:
+        # دور على أي معلومة جديدة في الـ new مش موجودة في الـ old
+        return old_summary + " | " + new_summary
+
+    return new_summary
+
 
 class MedicalAgent:
     def __init__(self, platform_id, clinic_id, page_id, sender_id, api_key=None):
         load_dotenv()
-        
-        # الجزء الخاص بالبيانات (زي ما هو)
+
         self.client_data = ClientRepository.get_or_create(
             platform_id, clinic_id, page_id, sender_id
         )
@@ -41,98 +73,150 @@ class MedicalAgent:
         self.context = {
             "clinic_name": clinic.name,
             "address": clinic.address or "",
-            "services": clinic.services or "No services listed",
+            "services": clinic.services or "",
             "subservices": clinic.subservices or ""
         }
 
-        # إعداد الـ LLM (استخدام النسخة الأحدث والأكثر استقراراً)
         key = os.getenv("GEMINI_KEY")
         if not key:
             raise ValueError("Google Gemini API key is required")
 
         llm = ChatGoogleGenerativeAI(
-            model="gemini-flash-latest", # تم التحديث لأفضل نسخة تدعم Structured Output
-            google_api_key=key
+            model="gemini-2.5-flash",
+            google_api_key=key,
+            temperature=0.2,
         )
 
-        # ربط الأدوات (Tools)
-        self.llm_with_tools = llm.bind_tools([book_appointment, check_numofexmantions])
-        
-        # ربط الـ Structured Output للمحادثات العادية
-        self.structured_llm = llm.with_structured_output(ChatResponse)
+        self.llm = llm.bind_tools(
+            [book_appointment, check_numofexmantions],
+            tool_choice="auto"
+        )
 
     def _get_history_summary(self):
-        return self.client_data.chat_summary or "No previous history."
+        return self.client_data.chat_summary or ""
 
     def chat(self, message: str):
+        total_start = time.time()
+
         chat_summary = self._get_history_summary()
-        full_system_prompt = SYSTEM_PROMPT.format(**self.context)
 
         messages = [
-            SystemMessage(content=full_system_prompt),
+            SystemMessage(content=SYSTEM_PROMPT.format(**self.context)),
             HumanMessage(content=USER_PROMPT.format(
                 summary=chat_summary,
                 last_reply=self.client_data.last_bot_reply or "",
-                message=message
+                message=message,
+                **self.context
             ))
         ]
 
         try:
-            # أولاً: بننادي الـ LLM مع الأدوات عشان نشوف لو عايز يحجز أو يستعلم
+            # Rate limiting
             counter = RequestCounter.query.first()
             if counter:
                 counter.decrement()
-                response = self.llm_with_tools.invoke(messages)
-            
-            # --- مراقبة التكلفة في كل رسالة ---
+
+            # LLM CALL
+            llm_start = time.time()
+            response = self.llm.invoke(messages)
+            llm_end = time.time()
+            print(f"🧠 LLM Time: {llm_end - llm_start:.2f}s")
+
             usage = getattr(response, "usage_metadata", None)
             if usage:
-                print(f"\n📊 TOKENS USAGE | Input: {usage.get('input_tokens')} | Output: {usage.get('output_tokens')} | Total: {usage.get('total_tokens')}")
+                print(f"📊 TOKENS | Input: {usage.get('input_tokens')} | Output: {usage.get('output_tokens')}")
 
             reply = ""
             new_summary = self.client_data.chat_summary or ""
 
-            # الحالة الأولى: الـ LLM قرر يستخدم Tool
+            # ===============================
+            # 🛠️ TOOL CALL
+            # ===============================
             if response.tool_calls:
                 tool_call = response.tool_calls[0]
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
 
                 func = TOOL_MAP.get(tool_name)
+
+                tool_start = time.time()
                 result = func.invoke(tool_args) if func else None
+                tool_end = time.time()
+                print(f"🛠️ Tool ({tool_name}) Time: {tool_end - tool_start:.2f}s")
 
                 if tool_name == "book_appointment":
                     reply = result.get("message", "❌ حدث خطأ غير متوقع.")
                     if result.get("status") == "success":
-                        new_summary = (self.client_data.chat_summary or "") + \
-                            f" | Action: Booking SUCCESS - {result.get('service_name')} on {result.get('appointment_date')}"
+                        new_summary += f" | Action: Booking SUCCESS - {result.get('service_name')} on {result.get('appointment_date')}"
 
                 elif tool_name == "check_numofexmantions":
                     reply = result.get("message", "❌ حدث خطأ أثناء التحقق.")
                     label = result.get("label", "")
                     patient_id = result.get("patient_id", tool_args.get("patient_id", ""))
+
                     if label == "consultation_success":
-                        new_summary = (self.client_data.chat_summary or "") + \
-                            f" | Action: Consultation SUCCESS - patient_id={patient_id} remaining={result.get('remaining')}"
+                        new_summary += f" | Action: Consultation SUCCESS - patient_id={patient_id} remaining={result.get('remaining')}"
                     elif label == "patient_not_found":
-                        new_summary = (self.client_data.chat_summary or "") + \
-                            f" | Action: Consultation FAILED - patient_id={patient_id} not found"
+                        new_summary += f" | Action: Consultation FAILED - patient_id={patient_id} not found"
                     elif label == "balance_exhausted":
-                        new_summary = (self.client_data.chat_summary or "") + \
-                            f" | Action: Consultation FAILED - patient_id={patient_id} balance exhausted"
+                        new_summary += f" | Action: Consultation FAILED - patient_id={patient_id} balance exhausted"
 
-            # الحالة الثانية: محادثة عادية (نجبره يرجع Structured Output)
+            # ===============================
+            # 💬 NORMAL RESPONSE (JSON)
+            # ===============================
             else:
-                structured_response = self.structured_llm.invoke(messages)
-                reply = structured_response.reply
-                new_summary = structured_response.summary
+                try:
+                    content = response.content
 
-            # تحديث الذاكرة (Memory)
+                    # handle Gemini list format
+                    if isinstance(content, list):
+                        text_parts = []
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                        content = "\n".join(text_parts)
+
+                    # strip ```json ``` wrapper if present
+                    content = clean_json_response(content)
+
+                    # parse JSON
+                    parsed = json.loads(content)
+
+                    # handle list
+                    if isinstance(parsed, list):
+                        parsed = parsed[0]
+
+                    # validate
+                    validated = ChatResponse(**parsed)
+                    reply = validated.reply
+
+                    # ✅ حماية الـ summary من الحذف
+                    new_summary = safe_merge_summary(
+                        old_summary=self.client_data.chat_summary or "",
+                        new_summary=validated.summary
+                    )
+
+                except Exception as e:
+                    print("⚠️ Parsing Error:", e)
+                    print("RAW RESPONSE:", response.content)
+                    reply = "عذراً، حدث خطأ في معالجة الرد."
+                    new_summary = self.client_data.chat_summary or ""
+
+            # ===============================
+            # 💾 MEMORY UPDATE
+            # ===============================
+            mem_start = time.time()
             MemoryService.update(
                 client=self.client_data,
                 summary=new_summary,
                 last_reply=reply
             )
+            mem_end = time.time()
+            print(f"💾 Memory Time: {mem_end - mem_start:.2f}s")
+
+            total_end = time.time()
+            print(f"🚀 TOTAL TIME: {total_end - total_start:.2f}s")
+            print("=" * 50)
 
             return reply
 

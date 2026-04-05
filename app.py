@@ -317,9 +317,22 @@ def delete_clinic_page(platform_id, clinic_id, page_id):
 @app.route('/booking')
 @login_required
 def booking():
-    books = Booking.query.all()
-    return render_template('booking.html', books=books)
+    today = datetime.now(egypt_tz).date()
+    yesterday = today - timedelta(days=1)
+    before_yesterday = today - timedelta(days=2)
 
+    books = Booking.query.filter(
+        db.func.date(Booking.booking_time) >= before_yesterday
+    ).order_by(Booking.booking_time.desc()).all()
+
+    return render_template('booking.html', books=books)
+@app.route('/booking/toggle/<int:id>', methods=['POST'])
+@login_required
+def toggle_booking(id):
+    book = Booking.query.get_or_404(id)
+    book.are_recived = not book.are_recived
+    db.session.commit()
+    return redirect(url_for('booking'))
 
 # this route for logout
 @app.route('/logout')

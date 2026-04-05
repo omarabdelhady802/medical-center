@@ -70,7 +70,7 @@ def check_numofexmantions(patient_id: str) -> dict:
             "status": "failed",
             "label": "patient_not_found",
             "patient_id": patient_id,
-            "message": "عذراً، رقم المريض غير مسجل لدينا. يرجى التأكد من الرقم."
+            "message":  "أهلاً بك، نتشرف بزيارتك للعيادة أولاً لإجراء الفحوصات اللازمة لتحديد الحالة والحل المناسب. هل تود معرفة المواعيد المتاحة للحجز الآن"
         }
     
     if result == "error":
@@ -109,7 +109,7 @@ def check_numofexmantions(patient_id: str) -> dict:
                 "label": "consultation_success",
                 "patient_id": patient_id,
                 "remaining": num - 1,
-                "message": "تم التحقق بنجاح! تم إرسال رسالتك للدكتور."
+                "message": "تم استلام استفسارك وجارٍ عرضه على الدكتور المختص، وسيتم الرد عليك خلال 48 ساعة. في الحالات الطارئة يرجى التواصل مع العيادة هاتفياً، كما يمكنني حجز موعد لك الآن."
             }
         else:
             return {
@@ -123,5 +123,5 @@ def check_numofexmantions(patient_id: str) -> dict:
             "status": "failed",
             "label": "balance_exhausted",
             "patient_id": patient_id,
-            "message": "نعتذر، لقد استنفذت جميع الاستشارات المجانية المتاحة لهذا الكود."
+            "message": "عذراً، هذه الخدمة غير متاحة حالياً. يرجى التكرم بحجز موعد للزيارة في العيادة للكشف والمتابعة، أو يمكنني مساعدتك في حجز موعد الآن إذا كنت تفضل ذلك."
         }

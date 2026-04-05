@@ -31,4 +31,4 @@ EXPOSE 2005
 
 # تشغيل التطبيق باستخدام Gunicorn
 # 4 workers ده رقم مناسب لمعظم السيرفرات المتوسطة
-CMD ["gunicorn", "--bind", "0.0.0.0:2005", "app:app", "--workers", "4", "--timeout", "120"]
+CMD ["gunicorn", "--bind", "0.0.0.0:2005", "app:app", "--workers", "2", "--timeout", "120"]

@@ -111,6 +111,7 @@ class Booking(db.Model):
     services = db.Column(db.Text)     
     date = db.Column(db.String(100))
     phone_number = db.Column(db.String(50))
+    are_recived = db.Column(db.BOOLEAN, default=False)  
     booking_time = db.Column(db.DateTime, default=datetime.now(egypt_tz))
 
 class Patient(db.Model):
