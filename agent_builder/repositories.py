@@ -30,7 +30,7 @@ class ClientRepository:
         """
         Handles the composite key for the Client.
         Tries to find the client first; creates them if not found.
-        Handles race conditions with rollback + re-fetch on IntegrityError.
+        Handles race conditions with rollback + re-fetch on IntegrityError.v
         """
         # 1. Try to find the client
         client = Client.query.filter_by(

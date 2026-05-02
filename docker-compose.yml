@@ -46,6 +46,8 @@ services:
     image: devlikeapro/waha
     container_name: waha_container_2
     restart: always
+    # LINUX CRITICAL: Increases shared memory from 64MB to 2GB
+    shm_size: '2gb'
     ports:
       - "3002:3000"
     environment:
@@ -54,11 +56,15 @@ services:
       - WAHA_API_KEY=key123
       - WH_URL=http://flask_app:2005/waha_webhook
       - WH_EVENTS=message.upsert,message.any
+      - WAHA_SESSION_STORE=FILE
+      - WAHA_SESSIONS_DIR=/app/.sessions
+      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+      # These flags help Chromium run in "headless" Linux environments
+      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu,--no-zygote,--disable-extensions
     volumes:
-      - ./waha_2_sessions:/app/.sessions # حفظ جلسات الواتساب
+      - ./waha_2_sessions:/app/.sessions
     networks:
       - medical_network
-
 networks:
   medical_network:
     driver: bridge

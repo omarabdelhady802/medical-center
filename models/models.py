@@ -112,7 +112,7 @@ class Booking(db.Model):
     date = db.Column(db.String(100))
     phone_number = db.Column(db.String(50))
     are_recived = db.Column(db.BOOLEAN, default=False)  
-    booking_time = db.Column(db.DateTime, default=datetime.now(egypt_tz))
+    booking_time = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Patient(db.Model):
     __tablename__ = "patient"
@@ -159,3 +159,13 @@ class RequestCounter(db.Model):
             self.last_reset = now
             self.last_updated = now
             db.session.commit()
+
+class save_for_exmnation(db.Model):
+    __tablename__ = "save_for_exmnations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    clinic_name = db.Column(db.String(120), nullable=False)
+    platform_name = db.Column(db.String(120), nullable=False)
+    patient_id = db.Column(db.String(120), nullable=False)
+    are_received = db.Column(db.Boolean, default=False) 
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)  

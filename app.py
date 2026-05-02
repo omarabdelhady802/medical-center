@@ -563,5 +563,26 @@ def add_patient():
     return render_template('add_patient.html')
 
 
+@app.route('/examination')
+@login_required
+def examination():
+    today = datetime.now(egypt_tz).date()
+    before_yesterday = today - timedelta(days=2)
+
+    exams = save_for_exmnation.query.filter(
+        db.func.date(save_for_exmnation.created_at) >= before_yesterday
+    ).order_by(save_for_exmnation.created_at.desc()).all()
+
+    return render_template('save_for_examination.html', exams=exams)
+
+@app.route('/examination/toggle/<int:id>', methods=['POST'])
+@login_required
+def toggle_examination(id):
+    exam = save_for_exmnation.query.get_or_404(id)
+    exam.are_received = not exam.are_received
+    db.session.commit()
+    return redirect(url_for('examination'))    
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=False, port=2005, threaded=True)

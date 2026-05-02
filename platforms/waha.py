@@ -14,9 +14,9 @@ class WAHAHandler(BaseChatHandler):
         
         # 🔹 Hard-coded Distribution
         if clinic_page.clinic_id == 1:
-            self.api_url = "http://waha_container_1:3001"
+            self.api_url = "http://waha_container_1:3000"
         elif clinic_page.clinic_id == 2:
-            self.api_url = "http://waha_container_2:3002"
+            self.api_url = "http://waha_container_2:3000"
         else:
             self.api_url = "http://waha_container_1:3000" 
           
@@ -96,3 +96,5 @@ class WAHAHandler(BaseChatHandler):
     def download_voice(self, media):
         """تحميل الملفات الصوتية من WAHA"""
         return self.download_media(media, "voice")
+    def handle_media(self, msg_type, media):
+     return None

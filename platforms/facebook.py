@@ -144,3 +144,5 @@ class FacebookHandler(BaseChatHandler):
                 subject="Unexpected Error in Facebook Voice Download",
                 body=f"An unexpected error occurred while downloading a voice note from Facebook: {e}")
             return None    
+    def handle_media(self, msg_type, media):
+     return None        

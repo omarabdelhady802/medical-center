@@ -8,7 +8,7 @@ voice_service = VoiceService()
 from notified_center.EmailSender import EmailClient
 from agent_builder.services import MemoryService
 emailclient = EmailClient()
-memory_service = MemoryService()
+memory_service = MemoryService()   
 
 class BaseChatHandler:
     platform_id = None
@@ -97,34 +97,38 @@ class BaseChatHandler:
         try:
             output = result.get("output", "")
             if not output:
-                self.send(sender_id, "❌ الملف فارغ أو غير واضح.")
+                self.send(sender_id, "❌ الملف فارغ أو غير واضح يرجي ارساله مرة أخرى.")
                 return
 
             output_str = str(output).upper()
 
-            if "SPAM" in output_str:
-                self.send(sender_id, "⚠️ عذراً، هذا المستند لا يبدو ملفاً طبياً.")
-                return
 
-            # --- 2. حالة التحاليل أو الأشعة (الـ Logic المطلوب) ---
-            if "LAB_RESULT" in output_str or "SCAN" in output_str or "PRESCRIPTION" in output_str:
+            if "PRESCRIPTION" in output_str:
                 try:
                     medical_data=json.dumps(output,ensure_ascii=False)
                 except:
                     medical_data=str(output)
-                
-                if "LAB_RESULT" in output_str:
-                    tag="[LAB_ANALYSIS]"
-                elif "SCAN" in output_str:
-                    tag="[SCAN_ANALYSIS]"    
-                else:
-                    tag="[PRESCRIPTION_ANALYSIS]"
-                agent_reply=self.handle_text(sender_id,f"{tag}\n{medical_data}")
+                agent_reply=self.handle_text(sender_id,f"وصف الدواء:\n{medical_data}")
                 self.send(sender_id,agent_reply)
                 return
-           
 
-            self.send(sender_id, "📄 استلمت مستندك، كيف يمكنني مساعدتك؟")
+            if "LAB_RESULT" in output_str:
+                static_reply="انا هنا مساعدك الالي لاي اسألة طبية  او استشارات يرجي الاتصال المباشر علي رقم العيادة01559988498"
+                self.send(sender_id,static_reply)
+                return   
+            
+            if "SCAN" in output_str:
+                static_reply="انا هنا مساعدك الالي لاي اسألة طبية  او استشارات يرجي الاتصال المباشر علي رقم العيادة01559988498"
+                self.send(sender_id,static_reply)
+                return      
+
+            if "SPAM" in output_str:
+                self.send(sender_id, " عذراً، هذا المستند لا يبدو ملفاً طبياً.")
+                return
+        
+            self.send(sender_id,"حدث خطأ في تحليل الملف، يرجى التأكد من وضوحه وإرساله مرة أخرى.")
+            
+           
 
         except Exception as e:
             # الحفاظ على الـ Error Logging

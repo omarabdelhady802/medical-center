@@ -3,6 +3,7 @@ import logging
 import os
 import json
 import time
+from typing import Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -20,12 +21,13 @@ logger = logging.getLogger(__name__)
 
 TOOL_MAP = {
     "book_appointment": book_appointment,
-    "check_numofexmantions": check_numofexmantions,
+    # "check_numofexmantions": check_numofexmantions,
 }
+
 
 class ChatResponse(BaseModel):
     reply: str
-    summary: str
+    summary: Optional[str] = ""
 
 
 def clean_json_response(content: str) -> str:
@@ -39,22 +41,8 @@ def clean_json_response(content: str) -> str:
 
 
 def safe_merge_summary(old_summary: str, new_summary: str) -> str:
-    """
-    حماية الـ summary من الحذف.
-    لو الموديل حذف أكتر من 20% من الـ summary القديم،
-    نرجع القديم ونضيف الجديد عليه.
-    """
-    if not old_summary:
-        return new_summary
-
     if not new_summary:
-        return old_summary
-
-    # لو الـ summary الجديد أقصر بكتير من القديم → الموديل حذف حاجة
-    if len(new_summary) < len(old_summary) * 0.8:
-        # دور على أي معلومة جديدة في الـ new مش موجودة في الـ old
-        return old_summary + " | " + new_summary
-
+        return old_summary or ""
     return new_summary
 
 
@@ -88,7 +76,7 @@ class MedicalAgent:
         )
 
         self.llm = llm.bind_tools(
-            [book_appointment, check_numofexmantions],
+            [book_appointment],
             tool_choice="auto"
         )
 
@@ -147,20 +135,33 @@ class MedicalAgent:
                 if tool_name == "book_appointment":
                     reply = result.get("message", "❌ حدث خطأ غير متوقع.")
                     if result.get("status") == "success":
-                        new_summary += f" | Action: Booking SUCCESS - {result.get('service_name')} on {result.get('appointment_date')}"
+                        new_summary += f" | Booking SUCCESS: {result.get('service_name')} on {result.get('appointment_date')}"
 
-                elif tool_name == "check_numofexmantions":
+                """            
+                 elif tool_name == "check_numofexmantions":
                     reply = result.get("message", "❌ حدث خطأ أثناء التحقق.")
                     label = result.get("label", "")
                     patient_id = result.get("patient_id", tool_args.get("patient_id", ""))
 
                     if label == "consultation_success":
-                        new_summary += f" | Action: Consultation SUCCESS - patient_id={patient_id} remaining={result.get('remaining')}"
-                    elif label == "patient_not_found":
-                        new_summary += f" | Action: Consultation FAILED - patient_id={patient_id} not found"
-                    elif label == "balance_exhausted":
-                        new_summary += f" | Action: Consultation FAILED - patient_id={patient_id} balance exhausted"
+                        from models.models import db, Platform, ClinicBranch, save_for_exmnation
+                        platform = Platform.query.get(self.client_data.platform_id)
+                        clinic = ClinicBranch.query.get(self.client_data.clinic_id)
+                        record = save_for_exmnation(
+                            platform_name=platform.name if platform else str(self.client_data.platform_id),
+                            clinic_name=clinic.name if clinic else str(self.client_data.clinic_id),
+                            patient_id=patient_id,
+                        )
+                        db.session.add(record)
+                        db.session.commit()
+                        new_summary += f" | Consultation SUCCESS: patient_id={patient_id} remaining={result.get('remaining')}"
 
+                    elif label == "patient_not_found":
+                        new_summary += f" | Consultation FAILED: patient_id={patient_id} not found"
+
+                    elif label == "balance_exhausted":
+                        new_summary += f" | Consultation FAILED: patient_id={patient_id} balance exhausted"
+                    """
             # ===============================
             # 💬 NORMAL RESPONSE (JSON)
             # ===============================
@@ -168,7 +169,6 @@ class MedicalAgent:
                 try:
                     content = response.content
 
-                    # handle Gemini list format
                     if isinstance(content, list):
                         text_parts = []
                         for item in content:
@@ -176,21 +176,15 @@ class MedicalAgent:
                                 text_parts.append(item.get("text", ""))
                         content = "\n".join(text_parts)
 
-                    # strip ```json ``` wrapper if present
                     content = clean_json_response(content)
-
-                    # parse JSON
                     parsed = json.loads(content)
 
-                    # handle list
                     if isinstance(parsed, list):
                         parsed = parsed[0]
 
-                    # validate
                     validated = ChatResponse(**parsed)
                     reply = validated.reply
 
-                    # ✅ حماية الـ summary من الحذف
                     new_summary = safe_merge_summary(
                         old_summary=self.client_data.chat_summary or "",
                         new_summary=validated.summary
